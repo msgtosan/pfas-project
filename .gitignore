@@ -2,6 +2,11 @@
 __pycache__/
 *.py[codz]
 *$py.class
+*.pyc
+
+#Data and report
+.vscode/
+Data/
 
 # C extensions
 *.so
@@ -205,3 +210,13 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+# Ignore virtual environments
+venv/
+
+# Ignore coverage reports
+.coverage
+
+# Ignore archives
+*.zip
+
+#Ignoe Data file

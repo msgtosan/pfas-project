@@ -1,0 +1,16 @@
+Statement of Account
+ICICI Bank Limited
+
+Account Number: 003101008527
+IFSC Code: ICIC0000031
+Branch: Mumbai Main Branch
+Statement Period: 01-Apr-2024 to 31-Mar-2025
+
+Date        Value Date   Description                          Debit       Credit      Balance
+01-04-2024  01-04-2024  Opening Balance                                              1,234,567.89
+05-04-2024  05-04-2024  NEFT-QUALCOMM INDIA PVT LTD                     630,338.38  1,864,906.27
+10-04-2024  10-04-2024  UPI/123456789/AMAZON                 5,000.00                1,859,906.27
+15-04-2024  15-04-2024  ATM WD REF 789456123                25,000.00                1,834,906.27
+30-06-2024  30-06-2024  INT PD 01-04-24 TO 30-06-24                      12,345.00  1,847,251.27
+05-07-2024  05-07-2024  NEFT-QUALCOMM INDIA PVT LTD                     642,338.38  2,489,589.65
+30-09-2024  30-09-2024  INT PD 01-07-24 TO 30-09-24                      13,456.00  2,503,045.65

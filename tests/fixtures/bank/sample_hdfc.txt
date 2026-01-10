@@ -1,0 +1,17 @@
+Statement of Account
+HDFC Bank
+Account Number: 50200012345678
+IFSC Code: HDFC0001234
+Branch: Delhi Connaught Place
+Statement Period: 01-Apr-2024 to 30-Sep-2024
+
+Date        Narration                           Chq./Ref.No.  Value Dt    Withdrawal  Deposit     Closing Balance
+01/04/2024  Opening Balance                                   01/04/2024                          1,567,890.12
+05/04/2024  NEFT-QUALCOMM INDIA PVT LTD         N123456       05/04/2024              630,338.38  2,198,228.50
+10/04/2024  UPI-SWIGGY-123456789@paytm          123456789     10/04/2024  3,500.00                2,194,728.50
+15/04/2024  ATM CASH-REF 789456123              789456123     15/04/2024  20,000.00               2,174,728.50
+20/04/2024  DEBIT CARD POS-AMAZON               987654321     20/04/2024  8,999.00                2,165,729.50
+30/06/2024  INT.CREDIT 01-APR-24 TO 30-JUN-24                 30/06/2024              15,234.56   2,180,964.06
+05/07/2024  NEFT-QUALCOMM INDIA PVT LTD         N654321       05/07/2024              642,338.38  2,823,302.44
+15/07/2024  RTGS-ICICI BANK-REF789              789           15/07/2024  500,000.00              2,323,302.44
+30/09/2024  INT.CREDIT 01-JUL-24 TO 30-SEP-24                 30/09/2024              16,456.78   2,339,759.22
