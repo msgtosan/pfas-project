@@ -220,3 +220,15 @@ venv/
 *.zip
 
 #Ignoe Data file
+
+# Byte-compiled / cache files
+__pycache__/
+*.py[cod]
+
+# Unit test / coverage reports
+.pytest_cache/
+.coverage
+htmlcov/
+
+# VSCode / IDE settings
+.vscode/
