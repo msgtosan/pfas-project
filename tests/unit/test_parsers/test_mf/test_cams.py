@@ -121,6 +121,20 @@ class TestCAMSParser:
         assert len(result.errors) > 0
         assert "Unsupported file format" in result.errors[0]
 
+    def test_parse_pdf_invalid_content(self, db_connection, tmp_path):
+        """Test PDF parsing handles invalid PDF content."""
+        parser = CAMSParser(db_connection)
+
+        # Create a dummy file with invalid PDF content
+        test_file = tmp_path / "test.pdf"
+        test_file.write_bytes(b"%PDF-1.4 fake content - not a real PDF")
+
+        result = parser.parse(test_file)
+
+        # Should fail because it's not a valid PDF
+        assert result.success is False
+        assert len(result.errors) > 0
+
     def test_get_or_create_amc_new(self, db_connection):
         """Test creating a new AMC."""
         parser = CAMSParser(db_connection)

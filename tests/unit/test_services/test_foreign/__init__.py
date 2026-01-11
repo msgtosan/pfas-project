@@ -1,0 +1,1 @@
+"""Foreign asset services tests."""

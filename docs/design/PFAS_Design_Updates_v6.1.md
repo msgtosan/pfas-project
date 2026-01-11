@@ -1201,4 +1201,350 @@ Proprietary - Personal Financial Accounting System for Indian Tax Residents
 
 ---
 
+## Version 6.3 - Bank Statement Intelligence Suite
+
+### Status: **IN DEVELOPMENT**
+
+**Implementation Date:** January 11, 2026
+
+---
+
+### 6.3.1 Executive Summary
+
+PFAS v6.3 introduces an intelligent bank statement processing suite that:
+
+1. **Recursively scans** `Data/Users` directories for bank statements
+2. **Uses fuzzy matching** for dynamic header detection across bank formats
+3. **Stores transactions** with full metadata for audit and analysis
+4. **Generates fiscal year reports** with Excel features (filters, subtotals)
+5. **Extracts income** for Rent, SGB Interest, Dividends, and Savings Bank Interest
+
+---
+
+### 6.3.2 Architecture Overview
+
+#### New Components
+
+```
+src/pfas/services/bank_intelligence/
+├── __init__.py
+├── intelligent_analyzer.py     # Task 1: Dynamic ingestion
+├── report_generation.py        # Task 2: Fiscal reporting
+├── db_audit.py                 # Task 3: Integrity auditing
+├── category_rules.py           # Category classification rules
+└── models.py                   # Data models
+```
+
+#### Data Flow
+
+```
+Data/Users/<user>/Bank/<bank>/*.xls
+         │
+         ▼
+┌────────────────────────┐
+│  intelligent_analyzer  │──── Fuzzy Header Detection
+│                        │──── Category Classification
+│                        │──── Deduplication via UID
+└──────────┬─────────────┘
+           │
+           ▼
+┌────────────────────────┐
+│  money_movement.db     │──── SQLite with full metadata
+│  (expense_intelligence)│──── uid, user_name, bank_name
+└──────────┬─────────────┘
+           │
+           ▼
+┌────────────────────────┐
+│  report_generation     │──── FY Mapping (Apr 1 rollover)
+│                        │──── Excel with Auto-Filters
+│                        │──── SUBTOTAL formulas
+└──────────┬─────────────┘
+           │
+           ▼
+┌────────────────────────┐
+│  Master_Report.xlsx    │──── Detailed Ledger sheets
+│                        │──── By FY, By Category
+└────────────────────────┘
+           │
+           ▼
+┌────────────────────────┐
+│  PFAS Asset Update     │──── Rent Income
+│  (pfas.db)             │──── SGB Interest
+│                        │──── Dividends
+│                        │──── Savings Bank Interest
+└────────────────────────┘
+```
+
+---
+
+### 6.3.3 Database Schema (money_movement.db)
+
+#### Core Transaction Table
+
+```sql
+CREATE TABLE IF NOT EXISTS bank_transactions_intel (
+    uid TEXT PRIMARY KEY,          -- SHA256 hash for deduplication
+    user_name TEXT NOT NULL,
+    bank_name TEXT NOT NULL,
+    txn_date DATE NOT NULL,
+    value_date DATE,
+    remarks TEXT,                  -- Cleaned/normalized remarks
+    base_string TEXT NOT NULL,     -- Original unaltered text
+    amount DECIMAL(15,2) NOT NULL, -- Positive for credit, negative for debit
+    txn_type TEXT CHECK(txn_type IN ('CREDIT', 'DEBIT')),
+    balance DECIMAL(15,2),
+    category TEXT,                 -- Auto-classified category
+    sub_category TEXT,
+    fiscal_year TEXT,              -- e.g., "FY 2024-25"
+    source_file TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_intel_user ON bank_transactions_intel(user_name);
+CREATE INDEX idx_intel_bank ON bank_transactions_intel(bank_name);
+CREATE INDEX idx_intel_date ON bank_transactions_intel(txn_date);
+CREATE INDEX idx_intel_category ON bank_transactions_intel(category);
+CREATE INDEX idx_intel_fy ON bank_transactions_intel(fiscal_year);
+```
+
+#### Category Master
+
+```sql
+CREATE TABLE IF NOT EXISTS categories (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT UNIQUE NOT NULL,
+    parent_category TEXT,
+    keywords TEXT,                 -- JSON array of matching keywords
+    is_income BOOLEAN DEFAULT FALSE,
+    asset_class TEXT,              -- Links to PFAS asset class
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+---
+
+### 6.3.4 User Bank Configuration
+
+**Location:** `Data/Users/<user>/Bank/<bank>/user_bank_config.json`
+
+```json
+{
+    "user_name": "Sanjay",
+    "bank_name": "ICICI",
+    "account_type": "SAVINGS",
+    "statement_format": "XLS",
+    "header_search_keywords": ["REMARK", "WITHDRAWAL/DR", "DEPOSIT/CR"],
+    "date_column_names": ["Date", "Txn Date", "Transaction Date"],
+    "amount_column_patterns": {
+        "debit": ["WITHDRAWAL", "DR", "Debit"],
+        "credit": ["DEPOSIT", "CR", "Credit"]
+    },
+    "skip_rows_top": 0,
+    "date_format": "%d/%m/%Y",
+    "category_overrides": {
+        "RENT FROM": "RENT_INCOME",
+        "SGB INT": "SGB_INTEREST",
+        "DIV-": "DIVIDEND"
+    }
+}
+```
+
+---
+
+### 6.3.5 Task 1: Intelligent Ingestion (intelligent_analyzer.py)
+
+#### Fuzzy Header Detection
+
+Uses `rapidfuzz` library for fuzzy string matching to locate header rows:
+
+```python
+HEADER_KEYWORDS = [
+    "REMARK", "REMARKS", "NARRATION", "DESCRIPTION", "PARTICULARS",
+    "WITHDRAWAL", "DR", "DEBIT", "WITHDRAWAL/DR",
+    "DEPOSIT", "CR", "CREDIT", "DEPOSIT/CR",
+    "DATE", "TXN DATE", "TRANSACTION DATE", "VALUE DATE",
+    "BALANCE", "CLOSING BALANCE"
+]
+
+def find_header_row(df: pd.DataFrame, threshold: int = 80) -> int:
+    """
+    Find header row using fuzzy matching.
+    Returns row index with highest match score.
+    """
+```
+
+#### Category Classification
+
+Income categories mapped to PFAS asset classes:
+
+| Category | Keywords | PFAS Asset Class | Table |
+|----------|----------|------------------|-------|
+| RENT_INCOME | RENT FROM, RENTAL, HOUSE RENT | Rental Income | rental_income |
+| SGB_INTEREST | SGB INT, SOV GOLD BOND | SGB Holdings | sgb_interest |
+| DIVIDEND | DIV-, DIVIDEND, DIV CREDIT | Stock Dividends | stock_dividends |
+| SAVINGS_INTEREST | INT PD, INTEREST CREDIT, INT.PD | Bank Interest | bank_interest_summary |
+| SALARY | SALARY, PAYROLL, SAL CREDIT | Salary | salary_records |
+| MF_REDEMPTION | MF-SIP, MUTUAL FUND | MF Transactions | mf_transactions |
+
+#### UID Generation
+
+Unique identifier for deduplication:
+
+```python
+def generate_uid(user_name: str, bank_name: str, txn_date: date,
+                 base_string: str, amount: Decimal) -> str:
+    """Generate SHA256 hash for transaction uniqueness."""
+    data = f"{user_name}|{bank_name}|{txn_date}|{base_string}|{amount}"
+    return hashlib.sha256(data.encode()).hexdigest()
+```
+
+---
+
+### 6.3.6 Task 2: Fiscal Reporting (report_generation.py)
+
+#### Date Normalization
+
+Robust date parsing with multiple fallback formats:
+
+```python
+DATE_FORMATS = [
+    "%d/%m/%Y",      # 04/04/2024
+    "%d-%m-%Y",      # 04-04-2024
+    "%Y-%m-%d",      # 2024-04-04
+    "%d %b %Y",      # 04 Apr 2024
+    "%d-%b-%Y",      # 04-Apr-2024
+    "%d/%m/%y",      # 04/04/24
+]
+
+def parse_date(date_str: str) -> date:
+    """Parse date with dayfirst=True and multiple fallback formats."""
+```
+
+#### Indian Fiscal Year Logic
+
+```python
+def get_fiscal_year(dt: date) -> str:
+    """
+    Calculate Indian Fiscal Year (April 1 - March 31).
+
+    Examples:
+        2024-03-15 -> "FY 2023-24"
+        2024-04-01 -> "FY 2024-25"
+        2024-12-25 -> "FY 2024-25"
+    """
+    if dt.month >= 4:  # April onwards
+        return f"FY {dt.year}-{str(dt.year + 1)[-2:]}"
+    else:  # Jan-March
+        return f"FY {dt.year - 1}-{str(dt.year)[-2:]}"
+```
+
+#### Excel Report Features
+
+**Sheet Structure:**
+- `Detailed_Ledger` - Full transactions with uid, user_name, base_string
+- `FY_Summary` - Pivot by fiscal year and category
+- `Category_Analysis` - Category-wise breakdown
+
+**Excel Features:**
+- Auto-filters on all headers
+- Dynamic SUBTOTAL formula: `=SUBTOTAL(9, Amount_Range)`
+- Conditional formatting for income/expense
+- Frozen header row
+
+---
+
+### 6.3.7 Task 3: Integrity Auditing (db_audit.py)
+
+#### Standalone Audit Script
+
+```python
+def audit_recent_records(db_path: str, count: int = 10) -> None:
+    """
+    Print most recent records with full metadata.
+    Validates data before reporting layer.
+    """
+```
+
+**Output Format:**
+```
+=== Recent Bank Transactions (Last 10) ===
+UID: abc123...
+User: Sanjay | Bank: ICICI | Date: 2024-12-15
+Base String: NEFT/RENT FROM TENANT
+Amount: +25,000.00 (CREDIT)
+Category: RENT_INCOME | FY: FY 2024-25
+Source: SanjaySB_FY24-25.xls
+---
+```
+
+---
+
+### 6.3.8 PFAS Asset Update Integration
+
+#### Asset Mapping
+
+| Bank Category | PFAS Table | Fields Updated |
+|---------------|------------|----------------|
+| RENT_INCOME | rental_income | property_id, month, gross_rent |
+| SGB_INTEREST | sgb_interest | sgb_id, credit_date, amount |
+| DIVIDEND | stock_dividends | symbol, dividend_date, gross_amount |
+| SAVINGS_INTEREST | bank_interest_summary | bank_account_id, financial_year, total_interest |
+
+#### Update Flow
+
+```python
+def update_pfas_from_bank_intel(intel_db: str, pfas_db: str, fiscal_year: str):
+    """
+    Extract categorized income from money_movement.db
+    and update corresponding PFAS asset tables.
+    """
+```
+
+---
+
+### 6.3.9 Directory Structure
+
+```
+Data/
+└── Users/
+    └── Sanjay/
+        └── Bank/
+            └── ICICI/
+                ├── user_bank_config.json    # User-specific config
+                ├── SanjaySB_FY24-25.xls     # Statement files
+                └── SanjaySB_FY25_Dec25.xls
+
+Reports/
+└── Bank_Intelligence/
+    ├── money_movement.db        # SQLite database
+    └── Master_Report.xlsx       # Excel output
+```
+
+---
+
+### 6.3.10 Requirements Traceability
+
+| New Req ID | Description | Links To |
+|------------|-------------|----------|
+| REQ-BANK-005 | Intelligent bank statement ingestion | REQ-BANK-001 |
+| REQ-BANK-006 | Fuzzy header detection | REQ-BANK-001 |
+| REQ-BANK-007 | Category-based income extraction | REQ-BANK-002 |
+| REQ-BANK-008 | Fiscal year reporting | REQ-RPT-002 |
+| REQ-BANK-009 | Asset class update from bank data | REQ-CORE-003 |
+
+---
+
+### 6.3.11 Implementation Checklist
+
+- [ ] `intelligent_analyzer.py` - Recursive scanner with fuzzy header detection
+- [ ] `report_generation.py` - Excel report with FY logic
+- [ ] `db_audit.py` - Integrity verification scripts
+- [ ] `models.py` - Data models for transactions
+- [ ] `category_rules.py` - Classification rule engine
+- [ ] Integration with main PFAS database
+- [ ] Unit tests for all components
+- [ ] Integration tests with sample data
+
+---
+
 **End of Document**

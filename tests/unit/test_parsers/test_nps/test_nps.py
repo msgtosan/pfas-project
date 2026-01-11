@@ -131,7 +131,7 @@ class TestNPSParser:
         # 80CCD(2) capped at 10% of Basic (80000)
         assert deductions['80CCD_2'] == Decimal("80000")
 
-    def test_get_or_create_account(self, db_connection):
+    def test_get_or_create_account(self, db_connection, sample_user):
         """Test creating NPS account."""
         parser = NPSParser(db_connection)
 
@@ -141,7 +141,7 @@ class TestNPSParser:
             scheme_preference="Aggressive"
         )
 
-        account_id = parser._get_or_create_account(account, user_id=1)
+        account_id = parser._get_or_create_account(account, user_id=sample_user["id"])
         assert account_id > 0
 
         # Verify it was created

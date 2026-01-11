@@ -4,13 +4,17 @@ import pandas as pd
 from pathlib import Path
 from datetime import datetime, date as date_type
 from decimal import Decimal
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 import sqlite3
 import re
+import logging
+import warnings
 
 from .models import MFTransaction, MFScheme, AssetClass, TransactionType, ParseResult
 from .classifier import classify_scheme
 from .capital_gains import CapitalGainsCalculator
+
+logger = logging.getLogger(__name__)
 
 
 class CAMSParser:
@@ -23,8 +27,22 @@ class CAMSParser:
 
     Supported formats:
     - Excel (.xlsx, .xls) with TRXN_DETAILS sheet
-    - PDF (basic extraction, Excel recommended)
+    - PDF (not yet implemented)
+
+    File Structure Notes:
+    - CAMS Capital Gains Excel files have headers at row 4 (0-indexed: 3)
+    - First 3 rows contain title and period information
+    - Sheet name is typically 'TRXN_DETAILS' at index 1
     """
+
+    # Asset class mapping for CAMS-specific values
+    ASSET_CLASS_MAPPING = {
+        'EQUITY': AssetClass.EQUITY,
+        'DEBT': AssetClass.DEBT,
+        'HYBRID': AssetClass.HYBRID,
+        'CASH': AssetClass.DEBT,  # CASH funds are treated as DEBT for tax purposes
+        'OTHER': AssetClass.OTHER,
+    }
 
     def __init__(self, db_connection: sqlite3.Connection, master_key: bytes = None):
         """
@@ -36,6 +54,7 @@ class CAMSParser:
         """
         self.conn = db_connection
         self.master_key = master_key or b"default_key_32_bytes_long_here"
+        self._duplicate_count = 0
 
     def parse(self, file_path: Path, password: Optional[str] = None) -> ParseResult:
         """
@@ -64,9 +83,7 @@ class CAMSParser:
             if file_path.suffix.lower() in ['.xlsx', '.xls']:
                 return self._parse_excel(file_path)
             elif file_path.suffix.lower() == '.pdf':
-                result = ParseResult(success=False, source_file=str(file_path))
-                result.add_error("PDF parsing not yet implemented. Please use Excel format.")
-                return result
+                return self._parse_pdf(file_path, password)
             else:
                 result = ParseResult(success=False, source_file=str(file_path))
                 result.add_error(f"Unsupported file format: {file_path.suffix}")
@@ -83,6 +100,7 @@ class CAMSParser:
 
         Expected sheet structure:
         - TRXN_DETAILS: Transaction data with CG calculations
+        - Headers at row 4 (skip first 3 rows for title/period info)
 
         Args:
             file_path: Path to Excel file
@@ -94,8 +112,16 @@ class CAMSParser:
         transactions = []
 
         try:
-            # Read transaction sheet
-            df = pd.read_excel(file_path, sheet_name='TRXN_DETAILS')
+            # Suppress openpyxl warnings for non-standard files
+            warnings.filterwarnings('ignore', category=UserWarning, module='openpyxl')
+
+            # Try different engines and configurations
+            df = self._read_excel_with_fallback(file_path)
+
+            if df is None or df.empty:
+                result.add_error("No data found in Excel file")
+                result.success = False
+                return result
 
             for idx, row in df.iterrows():
                 try:
@@ -117,6 +143,133 @@ class CAMSParser:
 
         return result
 
+    def _parse_pdf(self, file_path: Path, password: Optional[str] = None) -> ParseResult:
+        """
+        Parse PDF CAS file using pdfplumber.
+
+        Note: PDF parsing extracts basic transaction data from standard
+        CAMS CAS PDFs. For Capital Gains calculations, Excel format is
+        recommended as it includes detailed purchase/redemption lot matching.
+
+        Args:
+            file_path: Path to PDF file
+            password: PDF password (often PAN number for CAMS)
+
+        Returns:
+            ParseResult with transactions
+        """
+        try:
+            from .pdf_extractor import get_pdf_extractor, check_pdf_support
+
+            if not check_pdf_support():
+                result = ParseResult(success=False, source_file=str(file_path))
+                result.add_error(
+                    "PDF support requires pdfplumber. "
+                    "Install with: pip install pdfplumber"
+                )
+                return result
+
+            extractor = get_pdf_extractor()
+            result = extractor.extract_from_pdf(file_path, password)
+
+            # Add warning about Capital Gains data
+            if result.success and result.transactions:
+                result.add_warning(
+                    "PDF parsing provides basic transaction data. "
+                    "For accurate Capital Gains calculations, use the Excel format."
+                )
+
+            return result
+
+        except ImportError as e:
+            result = ParseResult(success=False, source_file=str(file_path))
+            result.add_error(f"PDF support not available: {str(e)}")
+            return result
+        except Exception as e:
+            result = ParseResult(success=False, source_file=str(file_path))
+            result.add_error(f"Failed to parse PDF: {str(e)}")
+            return result
+
+    def _read_excel_with_fallback(self, file_path: Path) -> Optional[pd.DataFrame]:
+        """
+        Read Excel file with multiple fallback strategies.
+
+        Handles various Excel file formats and structures:
+        1. Try calamine engine (fastest, most compatible)
+        2. Try openpyxl with various sheet configurations
+        3. Try xlrd for .xls files
+
+        Args:
+            file_path: Path to Excel file
+
+        Returns:
+            DataFrame or None if all strategies fail
+        """
+        sheet_names_to_try = ['TRXN_DETAILS', 1, 'Transaction_Details', 0]
+        header_rows_to_try = [3, 0, 4, 2]  # Row 4 (index 3) is typical for CAMS CG files
+
+        # Try calamine engine first (best compatibility)
+        for sheet in sheet_names_to_try:
+            for header in header_rows_to_try:
+                try:
+                    df = pd.read_excel(
+                        file_path,
+                        sheet_name=sheet,
+                        header=header,
+                        engine='calamine'
+                    )
+                    if self._validate_cams_dataframe(df):
+                        logger.debug(f"Successfully read with calamine: sheet={sheet}, header={header}")
+                        return df
+                except Exception:
+                    continue
+
+        # Fallback to openpyxl
+        for sheet in sheet_names_to_try:
+            for header in header_rows_to_try:
+                try:
+                    df = pd.read_excel(
+                        file_path,
+                        sheet_name=sheet,
+                        header=header,
+                        engine='openpyxl'
+                    )
+                    if self._validate_cams_dataframe(df):
+                        logger.debug(f"Successfully read with openpyxl: sheet={sheet}, header={header}")
+                        return df
+                except Exception:
+                    continue
+
+        # Last resort for .xls files
+        if file_path.suffix.lower() == '.xls':
+            try:
+                df = pd.read_excel(file_path, sheet_name=0, header=3, engine='xlrd')
+                if self._validate_cams_dataframe(df):
+                    return df
+            except Exception:
+                pass
+
+        return None
+
+    def _validate_cams_dataframe(self, df: pd.DataFrame) -> bool:
+        """
+        Validate that DataFrame has expected CAMS columns.
+
+        Args:
+            df: DataFrame to validate
+
+        Returns:
+            True if valid CAMS format
+        """
+        if df is None or df.empty:
+            return False
+
+        # Check for required columns (case-insensitive)
+        required_cols = {'scheme name', 'date', 'amount'}
+        df_cols_lower = {str(c).lower().strip() for c in df.columns}
+
+        return required_cols.issubset(df_cols_lower)
+
     def _parse_transaction_row(self, row: pd.Series) -> Optional[MFTransaction]:
         """
         Parse a single transaction row from CAMS Excel.
@@ -127,65 +280,113 @@ class CAMSParser:
         Returns:
             MFTransaction or None if row should be skipped
         """
-        # Extract scheme info
-        scheme_name = str(row.get('Scheme Name', '')).strip()
-        if not scheme_name or scheme_name == 'nan':
+        # Extract scheme info (handle various column name formats)
+        scheme_name = self._get_column_value(row, ['Scheme Name', 'scheme_name', 'SCHEME NAME'])
+        if not scheme_name:
             return None  # Skip empty rows
 
         # Extract ISIN from scheme name
         isin = self._extract_isin(scheme_name)
 
         # Get asset class from CAMS or classify
-        asset_class_str = str(row.get('ASSET CLASS', '')).upper().strip()
-        if asset_class_str in ['EQUITY', 'DEBT', 'HYBRID', 'OTHER']:
-            asset_class = AssetClass[asset_class_str]
+        asset_class_str = self._get_column_value(row, ['ASSET CLASS', 'Asset Class', 'asset_class'])
+        asset_class_str = str(asset_class_str).upper().strip() if asset_class_str else ''
+
+        # Use mapping for CAMS-specific values (including CASH -> DEBT)
+        if asset_class_str in self.ASSET_CLASS_MAPPING:
+            asset_class = self.ASSET_CLASS_MAPPING[asset_class_str]
         else:
             asset_class = classify_scheme(scheme_name)
+
+        # Get AMC name
+        amc_name = self._get_column_value(row, ['AMC Name', 'amc_name', 'AMC NAME', ' Fund Name'])
+        amc_name = amc_name if amc_name else ''
+
+        # Get grandfathering NAV (try multiple column name formats)
+        nav_31jan = self._to_decimal(self._get_column_value(row, [
+            'NAV As On 31/01/2018 (Grandfathered NAV)',
+            'NAV As On 31/01/2018',
+            'Grandfathered NAV'
+        ]))
 
         # Create scheme object
         scheme = MFScheme(
             name=scheme_name,
-            amc_name=str(row.get('AMC Name', '')).strip(),
+            amc_name=amc_name,
             isin=isin,
             asset_class=asset_class,
-            nav_31jan2018=self._to_decimal(row.get('NAV As On 31/01/2018 (Grandfathered NAV)'))
+            nav_31jan2018=nav_31jan if nav_31jan > 0 else None
         )
 
-        # Determine transaction type
-        desc = str(row.get('Desc', '')).strip()
+        # Determine transaction type (handle trailing spaces)
+        desc = self._get_column_value(row, ['Desc', 'desc', 'Trxn.Type', 'Transaction Type'])
+        desc = desc if desc else ''
         txn_type = self._determine_transaction_type(desc)
 
         # Parse dates
-        txn_date = self._parse_date(row.get('Date'))
+        txn_date_val = self._get_column_value(row, ['Date', 'date', 'Date.1'])
+        txn_date = self._parse_date(txn_date_val)
         if not txn_date:
             return None  # Skip if no date
 
-        purchase_date = self._parse_date(row.get('Date_1'))
+        purchase_date_val = self._get_column_value(row, ['Date_1', 'Date.1', 'Purchase Date'])
+        purchase_date = self._parse_date(purchase_date_val)
+
+        # Get folio number
+        folio = self._get_column_value(row, ['Folio No', 'Folio Number', 'folio_number'])
+        folio = folio if folio else ''
 
         # Create transaction
         txn = MFTransaction(
-            folio_number=str(row.get('Folio No', '')).strip(),
+            folio_number=folio,
             scheme=scheme,
             transaction_type=txn_type,
             date=txn_date,
-            units=self._to_decimal(row.get('Units')),
-            nav=self._to_decimal(row.get('Price')),
-            amount=self._to_decimal(row.get('Amount')),
-            stt=self._to_decimal(row.get('STT')),
+            units=self._to_decimal(self._get_column_value(row, ['Units', 'units', 'Current Units'])),
+            nav=self._to_decimal(self._get_column_value(row, ['Price', 'NAV', 'nav'])),
+            amount=self._to_decimal(self._get_column_value(row, ['Amount', 'amount'])),
+            stt=self._to_decimal(self._get_column_value(row, ['STT', 'stt'])),
             # Purchase info (for redemptions)
             purchase_date=purchase_date,
-            purchase_units=self._to_decimal(row.get('PurhUnit')),
-            purchase_nav=self._to_decimal(row.get('Unit Cost')),
+            purchase_units=self._to_decimal(self._get_column_value(row, ['PurhUnit', 'Purchase Units', 'Source Scheme units'])),
+            purchase_nav=self._to_decimal(self._get_column_value(row, ['Unit Cost', 'Original Purchase Cost', 'Purchase NAV'])),
             # Grandfathering
-            grandfathered_units=self._to_decimal(row.get('Units As On 31/01/2018 (Grandfathered Units)')),
-            grandfathered_nav=self._to_decimal(row.get('NAV As On 31/01/2018 (Grandfathered NAV)')),
-            grandfathered_value=self._to_decimal(row.get('Market Value As On 31/01/2018 (Grandfathered Value)')),
+            grandfathered_units=self._to_decimal(self._get_column_value(row, [
+                'Units As On 31/01/2018 (Grandfathered Units)',
+                'Grandfathered Units'
+            ])),
+            grandfathered_nav=self._to_decimal(self._get_column_value(row, [
+                'NAV As On 31/01/2018 (Grandfathered NAV)',
+                ' Grandfathered\n NAV as on 31/01/2018'
+            ])),
+            grandfathered_value=self._to_decimal(self._get_column_value(row, [
+                'Market Value As On 31/01/2018 (Grandfathered Value)',
+                'GrandFathered Cost Value'
+            ])),
             # Capital gains from CAMS
-            short_term_gain=self._to_decimal(row.get('Short Term')),
-            long_term_gain=self._to_decimal(row.get('Long Term Without Index'))
+            short_term_gain=self._to_decimal(self._get_column_value(row, ['Short Term', 'short_term'])),
+            long_term_gain=self._to_decimal(self._get_column_value(row, ['Long Term Without Index', 'Long Term']))
         )
 
         return txn
+
+    def _get_column_value(self, row: pd.Series, column_names: List[str]) -> Optional[str]:
+        """
+        Get value from row trying multiple column name variations.
+
+        Args:
+            row: Pandas Series
+            column_names: List of possible column names to try
+
+        Returns:
+            Value as string or None
+        """
+        for col_name in column_names:
+            if col_name in row.index:
+                val = row.get(col_name)
+                if pd.notna(val) and str(val).strip() and str(val).strip().lower() != 'nan':
+                    return str(val).strip()
+        return None
 
     def _extract_isin(self, scheme_name: str) -> Optional[str]:
         """
@@ -411,7 +612,18 @@ class CAMSParser:
     def _insert_transaction(
         self, folio_id: int, txn: MFTransaction, source_file: str, user_id: Optional[int]
     ) -> bool:
-        """Insert MF transaction into database."""
+        """
+        Insert MF transaction into database.
+
+        Args:
+            folio_id: Folio ID
+            txn: Transaction to insert
+            source_file: Source file path
+            user_id: User ID
+
+        Returns:
+            True if inserted, False if duplicate
+        """
         try:
             self.conn.execute(
                 """INSERT INTO mf_transactions
@@ -447,5 +659,18 @@ class CAMSParser:
             )
             return True
         except sqlite3.IntegrityError:
-            # Duplicate transaction
+            # Duplicate transaction - log for visibility
+            self._duplicate_count += 1
+            logger.debug(
+                f"Duplicate transaction skipped: {txn.scheme.name} "
+                f"on {txn.date.isoformat()} for {txn.amount}"
+            )
             return False
+
+    def get_duplicate_count(self) -> int:
+        """Get the count of duplicate transactions encountered."""
+        return self._duplicate_count
+
+    def reset_duplicate_count(self) -> None:
+        """Reset the duplicate transaction counter."""
+        self._duplicate_count = 0

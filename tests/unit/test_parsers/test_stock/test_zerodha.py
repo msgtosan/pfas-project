@@ -110,3 +110,137 @@ class TestZerodhaParserDatabaseOperations:
 
         count = parser.save_to_db(result, user_id=1)
         assert count == 0
+
+
+class TestZerodhaParserDividends:
+    """Tests for Zerodha dividend parsing (REQ-STK-003)."""
+
+    def test_dividend_summary_empty(self, db_connection):
+        """Test dividend summary with no dividends."""
+        parser = ZerodhaParser(db_connection)
+
+        from pfas.parsers.stock.models import DividendSummary
+        summary = parser.calculate_dividend_summary([], "2024-25")
+
+        assert summary.financial_year == "2024-25"
+        assert summary.total_dividend == Decimal("0")
+        assert summary.total_tds == Decimal("0")
+        assert summary.dividend_count == 0
+
+    def test_dividend_summary_with_dividends(self, db_connection):
+        """Test dividend summary calculation."""
+        parser = ZerodhaParser(db_connection)
+
+        from pfas.parsers.stock.models import StockDividend
+        dividends = [
+            StockDividend(
+                symbol="INFY",
+                isin="INE009A01021",
+                dividend_date=date(2024, 5, 15),
+                quantity=100,
+                dividend_per_share=Decimal("10"),
+                gross_amount=Decimal("1000"),
+                tds_amount=Decimal("0"),
+                net_amount=Decimal("1000"),
+            ),
+            StockDividend(
+                symbol="TCS",
+                isin="INE467B01029",
+                dividend_date=date(2024, 7, 20),
+                quantity=50,
+                dividend_per_share=Decimal("20"),
+                gross_amount=Decimal("1000"),
+                tds_amount=Decimal("100"),  # TDS applied
+                net_amount=Decimal("900"),
+            ),
+        ]
+
+        summary = parser.calculate_dividend_summary(dividends, "2024-25")
+
+        assert summary.total_dividend == Decimal("2000")
+        assert summary.total_tds == Decimal("100")
+        assert summary.net_dividend == Decimal("1900")
+        assert summary.dividend_count == 2
+
+    def test_save_dividends_empty(self, db_connection):
+        """Test saving empty dividends returns 0."""
+        parser = ZerodhaParser(db_connection)
+
+        from pfas.parsers.stock.models import ParseResult
+        result = ParseResult(success=True)
+
+        count = parser.save_dividends_to_db(result, user_id=1)
+        assert count == 0
+
+
+class TestZerodhaParserSTT:
+    """Tests for Zerodha STT tracking (REQ-STK-006)."""
+
+    def test_stt_summary_empty(self, db_connection):
+        """Test STT summary with no entries."""
+        parser = ZerodhaParser(db_connection)
+
+        from pfas.parsers.stock.models import STTSummary
+        summary = parser.calculate_stt_summary([], "2024-25")
+
+        assert summary.financial_year == "2024-25"
+        assert summary.total_stt == Decimal("0")
+        assert summary.delivery_stt == Decimal("0")
+        assert summary.intraday_stt == Decimal("0")
+
+    def test_stt_summary_with_entries(self, db_connection):
+        """Test STT summary calculation."""
+        parser = ZerodhaParser(db_connection)
+
+        from pfas.parsers.stock.models import STTEntry
+        entries = [
+            STTEntry(
+                trade_date=date(2024, 5, 15),
+                symbol="INFY",
+                trade_type=TradeType.SELL,
+                trade_category=TradeCategory.DELIVERY,
+                trade_value=Decimal("100000"),
+                stt_amount=Decimal("100"),
+            ),
+            STTEntry(
+                trade_date=date(2024, 6, 20),
+                symbol="SBIN",
+                trade_type=TradeType.SELL,
+                trade_category=TradeCategory.INTRADAY,
+                trade_value=Decimal("50000"),
+                stt_amount=Decimal("12.5"),
+            ),
+        ]
+
+        summary = parser.calculate_stt_summary(entries, "2024-25")
+
+        assert summary.total_stt == Decimal("112.5")
+        assert summary.delivery_stt == Decimal("100")
+        assert summary.intraday_stt == Decimal("12.5")
+
+    def test_save_stt_empty(self, db_connection):
+        """Test saving empty STT entries returns 0."""
+        parser = ZerodhaParser(db_connection)
+
+        from pfas.parsers.stock.models import ParseResult
+        result = ParseResult(success=True)
+
+        count = parser.save_stt_to_db(result, user_id=1)
+        assert count == 0
+
+
+class TestZerodhaParserSaveAll:
+    """Tests for save_all_to_db method."""
+
+    def test_save_all_empty(self, db_connection):
+        """Test save_all with empty result."""
+        parser = ZerodhaParser(db_connection)
+
+        from pfas.parsers.stock.models import ParseResult
+        result = ParseResult(success=True)
+
+        counts = parser.save_all_to_db(result, user_id=1)
+
+        assert counts["trades"] == 0
+        assert counts["dividends"] == 0
+        assert counts["stt"] == 0

@@ -692,7 +692,11 @@ CREATE TABLE IF NOT EXISTS mf_transactions (
     source_file TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (folio_id) REFERENCES mf_folios(id) ON DELETE CASCADE,
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE RESTRICT
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE RESTRICT,
+    -- Unique constraint for duplicate detection
+    -- Uses folio_id, date, transaction_type, amount, and purchase_date to identify unique transactions
+    -- purchase_date differentiates multiple redemption lots on the same day
+    UNIQUE(folio_id, date, transaction_type, amount, purchase_date)
 );
 
 CREATE TABLE IF NOT EXISTS mf_capital_gains (
@@ -788,6 +792,79 @@ CREATE INDEX IF NOT EXISTS idx_stock_trades_date ON stock_trades(trade_date);
 CREATE INDEX IF NOT EXISTS idx_stock_trades_symbol ON stock_trades(symbol);
 CREATE INDEX IF NOT EXISTS idx_stock_trades_type ON stock_trades(trade_type);
 CREATE INDEX IF NOT EXISTS idx_stock_cg_user_fy ON stock_capital_gains(user_id, financial_year);
+
+-- Stock Dividends Table (REQ-STK-003)
+CREATE TABLE IF NOT EXISTS stock_dividends (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    broker_id INTEGER,
+    symbol TEXT NOT NULL,
+    isin TEXT,
+    dividend_date DATE NOT NULL,
+    quantity INTEGER NOT NULL,
+    dividend_per_share DECIMAL(15,4) NOT NULL,
+    gross_amount DECIMAL(15,2) NOT NULL,
+    tds_amount DECIMAL(15,2) DEFAULT 0,
+    net_amount DECIMAL(15,2) NOT NULL,
+    source_file TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, symbol, dividend_date, quantity),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE RESTRICT,
+    FOREIGN KEY (broker_id) REFERENCES stock_brokers(id) ON DELETE RESTRICT
+);
+
+-- Stock Dividend Summary Table
+CREATE TABLE IF NOT EXISTS stock_dividend_summary (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    financial_year TEXT NOT NULL,
+    total_dividend DECIMAL(15,2) DEFAULT 0,
+    total_tds DECIMAL(15,2) DEFAULT 0,
+    net_dividend DECIMAL(15,2) DEFAULT 0,
+    dividend_count INTEGER DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, financial_year),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE RESTRICT
+);
+
+-- STT Ledger Table (REQ-STK-006)
+CREATE TABLE IF NOT EXISTS stock_stt_ledger (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    broker_id INTEGER,
+    trade_date DATE NOT NULL,
+    symbol TEXT NOT NULL,
+    trade_type TEXT NOT NULL CHECK(trade_type IN ('BUY', 'SELL')),
+    trade_category TEXT NOT NULL CHECK(trade_category IN ('INTRADAY', 'DELIVERY', 'FNO')),
+    trade_value DECIMAL(15,2) NOT NULL,
+    stt_amount DECIMAL(15,2) NOT NULL,
+    source_file TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE RESTRICT,
+    FOREIGN KEY (broker_id) REFERENCES stock_brokers(id) ON DELETE RESTRICT
+);
+
+-- STT Summary Table
+CREATE TABLE IF NOT EXISTS stock_stt_summary (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    financial_year TEXT NOT NULL,
+    delivery_stt DECIMAL(15,2) DEFAULT 0,
+    intraday_stt DECIMAL(15,2) DEFAULT 0,
+    fno_stt DECIMAL(15,2) DEFAULT 0,
+    total_stt DECIMAL(15,2) DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, financial_year),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE RESTRICT
+);
+
+-- Indexes for dividend and STT tables
+CREATE INDEX IF NOT EXISTS idx_stock_dividends_user ON stock_dividends(user_id);
+CREATE INDEX IF NOT EXISTS idx_stock_dividends_date ON stock_dividends(dividend_date);
+CREATE INDEX IF NOT EXISTS idx_stock_dividends_symbol ON stock_dividends(symbol);
+CREATE INDEX IF NOT EXISTS idx_stock_stt_user ON stock_stt_ledger(user_id);
+CREATE INDEX IF NOT EXISTS idx_stock_stt_date ON stock_stt_ledger(trade_date);
+CREATE INDEX IF NOT EXISTS idx_stock_stt_category ON stock_stt_ledger(trade_category);
 
 -- EPF (Employee Provident Fund) Tables
 CREATE TABLE IF NOT EXISTS epf_accounts (
@@ -891,6 +968,140 @@ CREATE INDEX IF NOT EXISTS idx_ppf_txn_date ON ppf_transactions(transaction_date
 CREATE INDEX IF NOT EXISTS idx_ppf_txn_type ON ppf_transactions(transaction_type);
 CREATE INDEX IF NOT EXISTS idx_ppf_txn_user ON ppf_transactions(user_id);
 
+-- Salary and Form 16 Tables (REQ-SAL-001 to REQ-SAL-012)
+
+-- Employers table
+CREATE TABLE IF NOT EXISTS employers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    tan TEXT UNIQUE NOT NULL,
+    address TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Salary Records table (monthly payslips)
+CREATE TABLE IF NOT EXISTS salary_records (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER REFERENCES users(id),
+    employer_id INTEGER REFERENCES employers(id),
+    pay_period TEXT NOT NULL,
+    pay_date DATE,
+
+    -- Earnings
+    basic_salary DECIMAL(15,2) DEFAULT 0,
+    hra DECIMAL(15,2) DEFAULT 0,
+    special_allowance DECIMAL(15,2) DEFAULT 0,
+    lta DECIMAL(15,2) DEFAULT 0,
+    other_allowances DECIMAL(15,2) DEFAULT 0,
+    gross_salary DECIMAL(15,2) DEFAULT 0,
+
+    -- Deductions
+    pf_employee DECIMAL(15,2) DEFAULT 0,
+    pf_employer DECIMAL(15,2) DEFAULT 0,
+    nps_employee DECIMAL(15,2) DEFAULT 0,
+    nps_employer DECIMAL(15,2) DEFAULT 0,
+    professional_tax DECIMAL(15,2) DEFAULT 0,
+    income_tax_deducted DECIMAL(15,2) DEFAULT 0,
+    espp_deduction DECIMAL(15,2) DEFAULT 0,
+    tcs_on_espp DECIMAL(15,2) DEFAULT 0,
+    other_deductions DECIMAL(15,2) DEFAULT 0,
+
+    -- RSU Tax Credit (NEGATIVE deduction = credit)
+    rsu_tax_credit DECIMAL(15,2) DEFAULT 0,
+
+    -- Net
+    total_deductions DECIMAL(15,2) DEFAULT 0,
+    net_pay DECIMAL(15,2) DEFAULT 0,
+
+    source_file TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, employer_id, pay_period)
+);
+
+-- RSU Tax Credits table (tracks credits for correlation)
+CREATE TABLE IF NOT EXISTS rsu_tax_credits (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    salary_record_id INTEGER REFERENCES salary_records(id),
+    credit_amount DECIMAL(15,2) NOT NULL,
+    credit_date DATE NOT NULL,
+    vest_id INTEGER,
+    correlation_status TEXT DEFAULT 'PENDING' CHECK(correlation_status IN ('PENDING', 'MATCHED', 'UNMATCHED')),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Form 16 Records table (annual TDS certificate)
+CREATE TABLE IF NOT EXISTS form16_records (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER REFERENCES users(id),
+    employer_id INTEGER REFERENCES employers(id),
+    assessment_year TEXT NOT NULL,
+
+    -- Part A - TDS Summary
+    q1_tds DECIMAL(15,2) DEFAULT 0,
+    q2_tds DECIMAL(15,2) DEFAULT 0,
+    q3_tds DECIMAL(15,2) DEFAULT 0,
+    q4_tds DECIMAL(15,2) DEFAULT 0,
+    total_tds DECIMAL(15,2) DEFAULT 0,
+
+    -- Part B - Income under Section 17
+    salary_17_1 DECIMAL(15,2) DEFAULT 0,
+    perquisites_17_2 DECIMAL(15,2) DEFAULT 0,
+    profits_17_3 DECIMAL(15,2) DEFAULT 0,
+    gross_salary DECIMAL(15,2) DEFAULT 0,
+
+    -- Exemptions under Section 10
+    hra_exemption DECIMAL(15,2) DEFAULT 0,
+    lta_exemption DECIMAL(15,2) DEFAULT 0,
+    other_exemptions DECIMAL(15,2) DEFAULT 0,
+
+    -- Deductions under Section 16
+    standard_deduction DECIMAL(15,2) DEFAULT 0,
+    professional_tax DECIMAL(15,2) DEFAULT 0,
+
+    -- Chapter VI-A Deductions
+    section_80c DECIMAL(15,2) DEFAULT 0,
+    section_80ccc DECIMAL(15,2) DEFAULT 0,
+    section_80ccd_1 DECIMAL(15,2) DEFAULT 0,
+    section_80ccd_1b DECIMAL(15,2) DEFAULT 0,
+    section_80ccd_2 DECIMAL(15,2) DEFAULT 0,
+    section_80d DECIMAL(15,2) DEFAULT 0,
+    section_80e DECIMAL(15,2) DEFAULT 0,
+    section_80g DECIMAL(15,2) DEFAULT 0,
+
+    -- Taxable Income and Tax
+    taxable_income DECIMAL(15,2) DEFAULT 0,
+    tax_payable DECIMAL(15,2) DEFAULT 0,
+
+    source_file TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, employer_id, assessment_year)
+);
+
+-- Perquisites table (Form 12BA details)
+CREATE TABLE IF NOT EXISTS perquisites (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    form16_id INTEGER REFERENCES form16_records(id),
+    perquisite_type TEXT NOT NULL CHECK(perquisite_type IN ('RSU', 'ESPP_DISCOUNT', 'EMPLOYER_PF', 'EMPLOYER_NPS', 'INTEREST_ACCRETION', 'OTHER')),
+    description TEXT,
+    gross_value DECIMAL(15,2) NOT NULL,
+    recovered_from_employee DECIMAL(15,2) DEFAULT 0,
+    taxable_value DECIMAL(15,2) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Indexes for salary tables
+CREATE INDEX IF NOT EXISTS idx_salary_user ON salary_records(user_id);
+CREATE INDEX IF NOT EXISTS idx_salary_employer ON salary_records(employer_id);
+CREATE INDEX IF NOT EXISTS idx_salary_period ON salary_records(pay_period);
+CREATE INDEX IF NOT EXISTS idx_salary_date ON salary_records(pay_date);
+CREATE INDEX IF NOT EXISTS idx_rsu_credits_salary ON rsu_tax_credits(salary_record_id);
+CREATE INDEX IF NOT EXISTS idx_rsu_credits_status ON rsu_tax_credits(correlation_status);
+CREATE INDEX IF NOT EXISTS idx_form16_user ON form16_records(user_id);
+CREATE INDEX IF NOT EXISTS idx_form16_employer ON form16_records(employer_id);
+CREATE INDEX IF NOT EXISTS idx_form16_year ON form16_records(assessment_year);
+CREATE INDEX IF NOT EXISTS idx_perquisites_form16 ON perquisites(form16_id);
+CREATE INDEX IF NOT EXISTS idx_perquisites_type ON perquisites(perquisite_type);
+
 -- NPS (National Pension System) Tables
 CREATE TABLE IF NOT EXISTS nps_accounts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -932,6 +1143,261 @@ CREATE INDEX IF NOT EXISTS idx_nps_txn_account ON nps_transactions(nps_account_i
 CREATE INDEX IF NOT EXISTS idx_nps_txn_date ON nps_transactions(transaction_date);
 CREATE INDEX IF NOT EXISTS idx_nps_txn_tier ON nps_transactions(tier);
 CREATE INDEX IF NOT EXISTS idx_nps_txn_user ON nps_transactions(user_id);
+
+-- Phase 2: Foreign Assets Tables
+
+-- Foreign Accounts (broker accounts)
+CREATE TABLE IF NOT EXISTS foreign_accounts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    broker_name TEXT NOT NULL,
+    account_number TEXT,
+    country TEXT DEFAULT 'US',
+    opening_date DATE,
+    account_id INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE RESTRICT,
+    FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE RESTRICT
+);
+
+-- Stock Plans (RSU/ESPP grants)
+CREATE TABLE IF NOT EXISTS stock_plans (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    grant_number TEXT UNIQUE NOT NULL,
+    grant_type TEXT NOT NULL CHECK(grant_type IN ('RSU', 'ESPP', 'ESOP', 'DRIP')),
+    grant_date DATE NOT NULL,
+    symbol TEXT NOT NULL,
+    company_name TEXT,
+    potential_quantity DECIMAL(15,4),
+    grant_price DECIMAL(15,4),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE RESTRICT
+);
+
+-- RSU Vests
+CREATE TABLE IF NOT EXISTS rsu_vests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    grant_number TEXT NOT NULL,
+    vest_date DATE NOT NULL,
+    shares_vested DECIMAL(15,4) NOT NULL,
+    fmv_usd DECIMAL(15,4) NOT NULL,
+    shares_withheld_for_tax DECIMAL(15,4) DEFAULT 0,
+    net_shares DECIMAL(15,4) DEFAULT 0,
+    tt_rate DECIMAL(10,4),
+    perquisite_inr DECIMAL(15,2),
+    salary_record_id INTEGER,
+    correlation_status TEXT DEFAULT 'PENDING' CHECK(correlation_status IN ('PENDING', 'MATCHED', 'UNMATCHED')),
+    source_file TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, grant_number, vest_date),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE RESTRICT,
+    FOREIGN KEY (salary_record_id) REFERENCES salary_records(id) ON DELETE SET NULL
+);
+
+-- RSU Sales
+CREATE TABLE IF NOT EXISTS rsu_sales (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    sale_date DATE NOT NULL,
+    shares_sold DECIMAL(15,4) NOT NULL,
+    sell_price_usd DECIMAL(15,4) NOT NULL,
+    sell_value_usd DECIMAL(15,2) NOT NULL,
+    sell_value_inr DECIMAL(15,2),
+    cost_basis_usd DECIMAL(15,2) NOT NULL,
+    cost_basis_inr DECIMAL(15,2),
+    gain_usd DECIMAL(15,2),
+    gain_inr DECIMAL(15,2),
+    is_ltcg BOOLEAN DEFAULT FALSE,
+    holding_period_days INTEGER,
+    fees_usd DECIMAL(15,2) DEFAULT 0,
+    fees_inr DECIMAL(15,2) DEFAULT 0,
+    matched_lots TEXT,
+    source_file TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE RESTRICT
+);
+
+-- ESPP Purchases
+CREATE TABLE IF NOT EXISTS espp_purchases (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    purchase_date DATE NOT NULL,
+    shares_purchased DECIMAL(15,4) NOT NULL,
+    purchase_price_usd DECIMAL(15,4) NOT NULL,
+    market_price_usd DECIMAL(15,4) NOT NULL,
+    discount_percentage DECIMAL(5,2),
+    perquisite_per_share_usd DECIMAL(15,4),
+    total_perquisite_usd DECIMAL(15,2),
+    tt_rate DECIMAL(10,4),
+    perquisite_inr DECIMAL(15,2),
+    purchase_value_inr DECIMAL(15,2),
+    lrs_amount_inr DECIMAL(15,2),
+    tcs_collected DECIMAL(15,2) DEFAULT 0,
+    financial_year TEXT,
+    source_file TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, purchase_date, shares_purchased),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE RESTRICT
+);
+
+-- ESPP Sales
+CREATE TABLE IF NOT EXISTS espp_sales (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    sale_date DATE NOT NULL,
+    shares_sold DECIMAL(15,4) NOT NULL,
+    sell_price_usd DECIMAL(15,4) NOT NULL,
+    sell_value_usd DECIMAL(15,2) NOT NULL,
+    sell_value_inr DECIMAL(15,2),
+    cost_basis_usd DECIMAL(15,2) NOT NULL,
+    cost_basis_inr DECIMAL(15,2),
+    gain_usd DECIMAL(15,2),
+    gain_inr DECIMAL(15,2),
+    is_ltcg BOOLEAN DEFAULT FALSE,
+    holding_period_days INTEGER,
+    fees_usd DECIMAL(15,2) DEFAULT 0,
+    fees_inr DECIMAL(15,2) DEFAULT 0,
+    matched_lots TEXT,
+    source_file TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE RESTRICT
+);
+
+-- Foreign Dividends
+CREATE TABLE IF NOT EXISTS foreign_dividends (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    dividend_date DATE NOT NULL,
+    symbol TEXT NOT NULL,
+    shares_held DECIMAL(15,4),
+    dividend_per_share_usd DECIMAL(15,6),
+    gross_dividend_usd DECIMAL(15,2) NOT NULL,
+    withholding_tax_usd DECIMAL(15,2) DEFAULT 0,
+    net_dividend_usd DECIMAL(15,2),
+    tt_rate DECIMAL(10,4),
+    gross_dividend_inr DECIMAL(15,2),
+    withholding_tax_inr DECIMAL(15,2),
+    net_dividend_inr DECIMAL(15,2),
+    is_reinvested BOOLEAN DEFAULT FALSE,
+    shares_purchased DECIMAL(15,4) DEFAULT 0,
+    source_file TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, dividend_date, symbol, gross_dividend_usd),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE RESTRICT
+);
+
+-- Foreign Holdings (for Schedule FA peak/closing values)
+CREATE TABLE IF NOT EXISTS foreign_holdings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    account_number TEXT,
+    valuation_date DATE NOT NULL,
+    symbol TEXT,
+    shares_held DECIMAL(15,4),
+    price_usd DECIMAL(15,4),
+    total_value_usd DECIMAL(15,2),
+    source_file TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE RESTRICT
+);
+
+-- DTAA Credits
+CREATE TABLE IF NOT EXISTS dtaa_credits (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    income_type TEXT NOT NULL CHECK(income_type IN ('DIVIDEND', 'INTEREST', 'ROYALTY', 'CAPITAL_GAINS')),
+    income_country TEXT NOT NULL DEFAULT 'US',
+    income_date DATE NOT NULL,
+    gross_income_usd DECIMAL(15,2) NOT NULL,
+    tax_withheld_usd DECIMAL(15,2) NOT NULL,
+    gross_income_inr DECIMAL(15,2),
+    tax_withheld_inr DECIMAL(15,2),
+    dtaa_article TEXT,
+    max_dtaa_rate DECIMAL(5,4),
+    indian_tax_on_income DECIMAL(15,2),
+    credit_allowed DECIMAL(15,2),
+    source_file TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE RESTRICT
+);
+
+-- Schedule FA (Foreign Assets disclosure)
+CREATE TABLE IF NOT EXISTS schedule_fa (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    financial_year TEXT NOT NULL,
+    assessment_year TEXT NOT NULL,
+    total_peak_value_inr DECIMAL(15,2),
+    total_closing_value_inr DECIMAL(15,2),
+    total_income_inr DECIMAL(15,2),
+    data_json TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, financial_year),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE RESTRICT
+);
+
+-- Chapter VI-A Deductions (for ITR)
+CREATE TABLE IF NOT EXISTS deductions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    financial_year TEXT NOT NULL,
+    section_80c DECIMAL(15,2) DEFAULT 0,
+    section_80ccc DECIMAL(15,2) DEFAULT 0,
+    section_80ccd_1 DECIMAL(15,2) DEFAULT 0,
+    section_80ccd_1b DECIMAL(15,2) DEFAULT 0,
+    section_80ccd_2 DECIMAL(15,2) DEFAULT 0,
+    section_80d DECIMAL(15,2) DEFAULT 0,
+    section_80e DECIMAL(15,2) DEFAULT 0,
+    section_80g DECIMAL(15,2) DEFAULT 0,
+    section_80tta DECIMAL(15,2) DEFAULT 0,
+    section_80ttb DECIMAL(15,2) DEFAULT 0,
+    section_80u DECIMAL(15,2) DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, financial_year),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE RESTRICT
+);
+
+-- Capital Gains Summary (consolidated)
+CREATE TABLE IF NOT EXISTS capital_gains (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    financial_year TEXT NOT NULL,
+    asset_type TEXT NOT NULL CHECK(asset_type IN ('EQUITY', 'MF_EQUITY', 'MF_DEBT', 'FOREIGN_EQUITY', 'PROPERTY', 'OTHER')),
+    sell_date DATE,
+    gain_type TEXT CHECK(gain_type IN ('STCG', 'LTCG')),
+    realized_gain DECIMAL(15,2),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE RESTRICT
+);
+
+-- Indexes for Phase 2 tables
+CREATE INDEX IF NOT EXISTS idx_foreign_accounts_user ON foreign_accounts(user_id);
+CREATE INDEX IF NOT EXISTS idx_stock_plans_user ON stock_plans(user_id);
+CREATE INDEX IF NOT EXISTS idx_stock_plans_grant ON stock_plans(grant_number);
+CREATE INDEX IF NOT EXISTS idx_rsu_vests_user ON rsu_vests(user_id);
+CREATE INDEX IF NOT EXISTS idx_rsu_vests_date ON rsu_vests(vest_date);
+CREATE INDEX IF NOT EXISTS idx_rsu_vests_grant ON rsu_vests(grant_number);
+CREATE INDEX IF NOT EXISTS idx_rsu_vests_status ON rsu_vests(correlation_status);
+CREATE INDEX IF NOT EXISTS idx_rsu_sales_user ON rsu_sales(user_id);
+CREATE INDEX IF NOT EXISTS idx_rsu_sales_date ON rsu_sales(sale_date);
+CREATE INDEX IF NOT EXISTS idx_espp_purchases_user ON espp_purchases(user_id);
+CREATE INDEX IF NOT EXISTS idx_espp_purchases_date ON espp_purchases(purchase_date);
+CREATE INDEX IF NOT EXISTS idx_espp_sales_user ON espp_sales(user_id);
+CREATE INDEX IF NOT EXISTS idx_espp_sales_date ON espp_sales(sale_date);
+CREATE INDEX IF NOT EXISTS idx_foreign_dividends_user ON foreign_dividends(user_id);
+CREATE INDEX IF NOT EXISTS idx_foreign_dividends_date ON foreign_dividends(dividend_date);
+CREATE INDEX IF NOT EXISTS idx_foreign_dividends_symbol ON foreign_dividends(symbol);
+CREATE INDEX IF NOT EXISTS idx_foreign_holdings_user ON foreign_holdings(user_id);
+CREATE INDEX IF NOT EXISTS idx_foreign_holdings_date ON foreign_holdings(valuation_date);
+CREATE INDEX IF NOT EXISTS idx_dtaa_credits_user ON dtaa_credits(user_id);
+CREATE INDEX IF NOT EXISTS idx_dtaa_credits_date ON dtaa_credits(income_date);
+CREATE INDEX IF NOT EXISTS idx_schedule_fa_user ON schedule_fa(user_id);
+CREATE INDEX IF NOT EXISTS idx_schedule_fa_fy ON schedule_fa(financial_year);
+CREATE INDEX IF NOT EXISTS idx_deductions_user_fy ON deductions(user_id, financial_year);
+CREATE INDEX IF NOT EXISTS idx_capital_gains_user ON capital_gains(user_id);
+CREATE INDEX IF NOT EXISTS idx_capital_gains_fy ON capital_gains(financial_year);
 """
 
 

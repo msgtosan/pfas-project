@@ -104,7 +104,7 @@ class TestPPFParser:
         # Total deposits = 180000, but capped at 150000
         assert eligible == Decimal("150000")
 
-    def test_get_or_create_account(self, db_connection):
+    def test_get_or_create_account(self, db_connection, sample_user):
         """Test creating PPF account."""
         parser = PPFParser(db_connection)
 
@@ -116,7 +116,7 @@ class TestPPFParser:
         )
         account.calculate_maturity_date()
 
-        account_id = parser._get_or_create_account(account, user_id=1)
+        account_id = parser._get_or_create_account(account, user_id=sample_user["id"])
         assert account_id > 0
 
         # Verify maturity date (15 years from opening)

@@ -2,11 +2,15 @@
 PyPDF2>=3.0.0
 pdfplumber>=0.9.0
 tabula-py>=2.7.0
+reportlab>=4.0.0
 
 # Excel/Data Processing
 openpyxl>=3.1.0
 pandas>=2.0.0
 xlrd>=2.0.1
+
+# Fuzzy Matching (for bank statement header detection)
+rapidfuzz>=3.0.0
 
 # Database
 sqlcipher3>=0.5.0

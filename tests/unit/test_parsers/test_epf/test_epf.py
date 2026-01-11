@@ -65,7 +65,7 @@ class TestEPFParser:
         # Total = 12000 + 5000 + 12000 = 29000
         assert eligible == Decimal("29000")
 
-    def test_get_or_create_account_new(self, db_connection):
+    def test_get_or_create_account_new(self, db_connection, sample_user):
         """Test creating a new EPF account."""
         parser = EPFParser(db_connection)
 
@@ -77,7 +77,7 @@ class TestEPFParser:
             member_name="Test User"
         )
 
-        account_id = parser._get_or_create_account(account, user_id=1)
+        account_id = parser._get_or_create_account(account, user_id=sample_user["id"])
         assert account_id > 0
 
         # Verify it was created
@@ -87,7 +87,7 @@ class TestEPFParser:
         row = cursor.fetchone()
         assert row["uan"] == "100123456789"
 
-    def test_get_or_create_account_existing(self, db_connection):
+    def test_get_or_create_account_existing(self, db_connection, sample_user):
         """Test getting existing EPF account."""
         parser = EPFParser(db_connection)
 
@@ -100,10 +100,10 @@ class TestEPFParser:
         )
 
         # Create first time
-        account_id1 = parser._get_or_create_account(account, user_id=1)
+        account_id1 = parser._get_or_create_account(account, user_id=sample_user["id"])
 
         # Get same account again
-        account_id2 = parser._get_or_create_account(account, user_id=1)
+        account_id2 = parser._get_or_create_account(account, user_id=sample_user["id"])
 
         # Should return same ID
         assert account_id1 == account_id2

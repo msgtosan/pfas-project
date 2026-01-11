@@ -6,8 +6,19 @@ from datetime import date as date_type
 from decimal import Decimal
 from typing import Optional
 import sqlite3
+import re
 
-from .models import StockTrade, TradeType, TradeCategory, ParseResult
+from .models import (
+    StockTrade,
+    StockDividend,
+    STTEntry,
+    TradeType,
+    TradeCategory,
+    ParseResult,
+    CapitalGainsSummary,
+    DividendSummary,
+    STTSummary,
+)
 
 
 class ZerodhaParser:
@@ -15,9 +26,15 @@ class ZerodhaParser:
     Parser for Zerodha Tax P&L Excel.
 
     Zerodha Tax P&L provides pre-matched trades with capital gains.
-    Supports TRADEWISE, SCRIPWISE, SPECULATIVE, and SUMMARY sheets.
 
-    Primary sheet: TRADEWISE (matched buy-sell pairs)
+    Supported formats:
+    - New format (2024+): "Tradewise Exits from YYYY-MM-DD" sheet with header at row 14
+    - Old format: TRADEWISE, SCRIPWISE, SPECULATIVE sheets
+
+    Column mapping (new format):
+    - Symbol, ISIN, Entry Date, Exit Date, Quantity
+    - Buy Value, Sell Value, Profit
+    - Period of Holding, Fair Market Value, Taxable Profit, Turnover
     """
 
     def __init__(self, db_connection: sqlite3.Connection):
@@ -32,6 +49,8 @@ class ZerodhaParser:
     def parse(self, file_path: Path) -> ParseResult:
         """
         Parse Zerodha Tax P&L Excel file.
+
+        Automatically detects old vs new format based on sheet names.
 
         Args:
             file_path: Path to Zerodha Tax P&L Excel
@@ -54,31 +73,173 @@ class ZerodhaParser:
         try:
             excel = pd.ExcelFile(file_path)
 
-            # Parse TRADEWISE sheet (main trade data)
-            if 'TRADEWISE' in excel.sheet_names:
-                df = pd.read_excel(excel, sheet_name='TRADEWISE')
-                trades = self._parse_tradewise(df, result)
-                result.trades.extend(trades)
-            else:
-                result.add_warning("TRADEWISE sheet not found")
+            # Detect format by sheet names
+            tradewise_sheet = self._find_tradewise_sheet(excel.sheet_names)
 
-            # Parse SPECULATIVE sheet (intraday trades)
+            if tradewise_sheet:
+                if tradewise_sheet.startswith('Tradewise Exits'):
+                    # New format (2024+)
+                    df = pd.read_excel(excel, sheet_name=tradewise_sheet, header=14)
+                    trades = self._parse_tradewise_new(df, result)
+                    result.trades.extend(trades)
+                else:
+                    # Old format (TRADEWISE)
+                    df = pd.read_excel(excel, sheet_name=tradewise_sheet)
+                    trades = self._parse_tradewise_old(df, result)
+                    result.trades.extend(trades)
+            else:
+                result.add_warning("No tradewise sheet found")
+
+            # Parse SPECULATIVE sheet (intraday trades) - old format only
             if 'SPECULATIVE' in excel.sheet_names:
                 df_spec = pd.read_excel(excel, sheet_name='SPECULATIVE')
                 speculative_trades = self._parse_speculative(df_spec, result)
                 result.trades.extend(speculative_trades)
 
-            if len(result.trades) == 0:
-                result.add_warning("No trades found in file")
+            # Parse Equity Dividends sheet (REQ-STK-003)
+            if 'Equity Dividends' in excel.sheet_names:
+                df_div = pd.read_excel(excel, sheet_name='Equity Dividends', header=14)
+                dividends = self._parse_dividends(df_div, result)
+                result.dividends.extend(dividends)
+
+            # Generate STT entries from trades (REQ-STK-006)
+            for trade in result.trades:
+                if trade.stt > Decimal("0"):
+                    stt_entry = STTEntry(
+                        trade_date=trade.trade_date,
+                        symbol=trade.symbol,
+                        trade_type=trade.trade_type,
+                        trade_category=trade.trade_category or TradeCategory.DELIVERY,
+                        trade_value=trade.amount,
+                        stt_amount=trade.stt,
+                        source_file=str(file_path),
+                    )
+                    result.stt_entries.append(stt_entry)
+
+            if len(result.trades) == 0 and len(result.dividends) == 0:
+                result.add_warning("No trades or dividends found in file")
 
         except Exception as e:
             result.add_error(f"Failed to parse Excel: {str(e)}")
 
         return result
 
-    def _parse_tradewise(self, df: pd.DataFrame, result: ParseResult) -> list[StockTrade]:
+    def _find_tradewise_sheet(self, sheet_names: list[str]) -> Optional[str]:
         """
-        Parse TRADEWISE sheet (delivery trades with pre-matched buy-sell).
+        Find the tradewise exits sheet.
+
+        Handles both old (TRADEWISE) and new (Tradewise Exits from...) formats.
+
+        Args:
+            sheet_names: List of sheet names from Excel file
+
+        Returns:
+            Sheet name or None if not found
+        """
+        # Look for new format first
+        for name in sheet_names:
+            if name.startswith('Tradewise Exits'):
+                return name
+
+        # Fall back to old format
+        if 'TRADEWISE' in sheet_names:
+            return 'TRADEWISE'
+
+        return None
+
+    def _parse_tradewise_new(self, df: pd.DataFrame, result: ParseResult) -> list[StockTrade]:
+        """
+        Parse new format Tradewise Exits sheet (2024+).
+
+        Columns: Symbol, ISIN, Entry Date, Exit Date, Quantity, Buy Value,
+                 Sell Value, Profit, Period of Holding, Fair Market Value,
+                 Taxable Profit, Turnover
+
+        Args:
+            df: DataFrame from Tradewise Exits sheet
+            result: ParseResult to add warnings to
+
+        Returns:
+            List of StockTrade objects (SELL trades only with pre-matched buy info)
+        """
+        trades = []
+
+        for idx, row in df.iterrows():
+            try:
+                # Skip empty rows and section headers
+                symbol = row.get('Symbol')
+                if pd.isna(symbol):
+                    continue
+
+                symbol = str(symbol).strip()
+
+                # Skip section markers and repeated headers
+                if symbol in ['Symbol', 'Equity', 'Mutual Funds', 'Currency',
+                              'Commodity', 'Equity - Buyback', 'F&O']:
+                    continue
+
+                # Validate ISIN (must start with INE or INF)
+                isin = row.get('ISIN')
+                if pd.isna(isin):
+                    continue
+                isin = str(isin).strip()
+                if not (isin.startswith('INE') or isin.startswith('INF')):
+                    continue
+
+                # Parse dates
+                entry_date = self._parse_date(row.get('Entry Date'))
+                exit_date = self._parse_date(row.get('Exit Date'))
+
+                if not exit_date:
+                    continue
+
+                # Parse quantities and amounts
+                quantity = self._to_int(row.get('Quantity'))
+                if quantity <= 0:
+                    continue
+
+                buy_value = self._to_decimal(row.get('Buy Value'))
+                sell_value = self._to_decimal(row.get('Sell Value'))
+                profit = self._to_decimal(row.get('Profit'))
+                holding_days = self._to_int(row.get('Period of Holding'))
+
+                # Calculate prices from values
+                buy_price = buy_value / quantity if quantity > 0 else Decimal("0")
+                sell_price = sell_value / quantity if quantity > 0 else Decimal("0")
+
+                # Determine if long-term (>365 days)
+                is_long_term = holding_days > 365 if holding_days else False
+
+                # Create SELL trade with pre-matched buy info
+                trade = StockTrade(
+                    symbol=symbol,
+                    isin=isin,
+                    trade_date=exit_date,
+                    trade_type=TradeType.SELL,
+                    quantity=quantity,
+                    price=sell_price,
+                    amount=sell_value,
+                    net_amount=sell_value,
+                    trade_category=TradeCategory.DELIVERY,
+                    # Pre-matched buy info
+                    buy_date=entry_date,
+                    buy_price=buy_price,
+                    cost_of_acquisition=buy_value,
+                    holding_period_days=holding_days,
+                    is_long_term=is_long_term,
+                    capital_gain=profit
+                )
+                trades.append(trade)
+
+            except Exception as e:
+                result.add_warning(f"Row {idx}: {str(e)}")
+                continue
+
+        return trades
+
+    def _parse_tradewise_old(self, df: pd.DataFrame, result: ParseResult) -> list[StockTrade]:
+        """
+        Parse old format TRADEWISE sheet (delivery trades with pre-matched buy-sell).
 
         Expected columns:
         - Symbol, ISIN, Trade Type, Quantity
@@ -244,6 +405,124 @@ class ZerodhaParser:
 
         return trades
 
+    def _parse_dividends(self, df: pd.DataFrame, result: ParseResult) -> list[StockDividend]:
+        """
+        Parse Equity Dividends sheet.
+
+        Columns (after header row 14):
+        - Symbol, ISIN, Date, Quantity, Dividend Per Share, Net Dividend Amount
+
+        Note: Zerodha provides net dividend after TDS deduction.
+        We estimate TDS as 10% if annual dividend per company > Rs 5000.
+
+        Args:
+            df: DataFrame from Equity Dividends sheet
+            result: ParseResult to add warnings to
+
+        Returns:
+            List of StockDividend objects
+        """
+        dividends = []
+
+        # Rename columns to match expected format
+        if len(df.columns) >= 7:
+            df.columns = ['_', 'Symbol', 'ISIN', 'Date', 'Quantity', 'Dividend_Per_Share', 'Net_Amount']
+
+        for idx, row in df.iterrows():
+            try:
+                symbol = row.get('Symbol')
+                if pd.isna(symbol) or str(symbol).strip() == '':
+                    continue
+
+                symbol = str(symbol).strip()
+
+                # Skip header row that may appear in data
+                if symbol == 'Symbol':
+                    continue
+
+                isin = str(row.get('ISIN', '')).strip() if not pd.isna(row.get('ISIN')) else ''
+
+                # Validate ISIN
+                if not (isin.startswith('INE') or isin.startswith('INF')):
+                    continue
+
+                dividend_date = self._parse_date(row.get('Date'))
+                if not dividend_date:
+                    continue
+
+                quantity = self._to_int(row.get('Quantity'))
+                dividend_per_share = self._to_decimal(row.get('Dividend_Per_Share'))
+                net_amount = self._to_decimal(row.get('Net_Amount'))
+
+                # Calculate gross amount (net + estimated TDS)
+                # Zerodha provides net amount after TDS
+                # TDS is 10% if dividend > Rs 5000 per company per year
+                # For simplicity, we use net amount as provided
+                gross_amount = net_amount
+                tds_amount = Decimal("0")
+
+                dividend = StockDividend(
+                    symbol=symbol,
+                    isin=isin,
+                    dividend_date=dividend_date,
+                    quantity=quantity,
+                    dividend_per_share=dividend_per_share,
+                    gross_amount=gross_amount,
+                    tds_amount=tds_amount,
+                    net_amount=net_amount,
+                )
+                dividends.append(dividend)
+
+            except Exception as e:
+                result.add_warning(f"Dividend row {idx}: {str(e)}")
+                continue
+
+        return dividends
+
+    def calculate_dividend_summary(
+        self,
+        dividends: list[StockDividend],
+        fy: str = "2024-25"
+    ) -> DividendSummary:
+        """
+        Calculate dividend income summary.
+
+        Args:
+            dividends: List of StockDividend objects
+            fy: Financial year (default: 2024-25)
+
+        Returns:
+            DividendSummary with totals
+        """
+        summary = DividendSummary(financial_year=fy)
+
+        for dividend in dividends:
+            summary.add_dividend(dividend)
+
+        return summary
+
+    def calculate_stt_summary(
+        self,
+        stt_entries: list[STTEntry],
+        fy: str = "2024-25"
+    ) -> STTSummary:
+        """
+        Calculate STT payment summary.
+
+        Args:
+            stt_entries: List of STTEntry objects
+            fy: Financial year (default: 2024-25)
+
+        Returns:
+            STTSummary with category-wise totals
+        """
+        summary = STTSummary(financial_year=fy)
+
+        for entry in stt_entries:
+            summary.add_stt(entry)
+
+        return summary
+
     def _parse_date(self, value) -> Optional[date_type]:
         """
         Parse date from various formats.
@@ -283,9 +562,65 @@ class ZerodhaParser:
             return Decimal("0")
 
         try:
+            # Handle string with commas
+            if isinstance(value, str):
+                value = value.replace(',', '')
             return Decimal(str(value))
         except:
             return Decimal("0")
+
+    def _to_int(self, value) -> int:
+        """
+        Convert value to int safely.
+
+        Args:
+            value: Numeric value
+
+        Returns:
+            int value (0 if invalid)
+        """
+        if pd.isna(value) or value == '' or value is None:
+            return 0
+
+        try:
+            return int(float(value))
+        except:
+            return 0
+
+    def calculate_capital_gains(
+        self,
+        trades: list[StockTrade],
+        fy: str = "2024-25"
+    ) -> CapitalGainsSummary:
+        """
+        Calculate capital gains summary from trades.
+
+        Args:
+            trades: List of StockTrade objects
+            fy: Financial year (default: 2024-25)
+
+        Returns:
+            CapitalGainsSummary with STCG/LTCG totals
+        """
+        summary = CapitalGainsSummary(
+            financial_year=fy,
+            trade_category=TradeCategory.DELIVERY
+        )
+
+        for trade in trades:
+            if trade.trade_type != TradeType.SELL:
+                continue
+
+            if trade.capital_gain is None:
+                continue
+
+            if trade.is_long_term:
+                summary.ltcg_amount += trade.capital_gain
+            else:
+                summary.stcg_amount += trade.capital_gain
+
+        summary.calculate_taxable_amounts()
+        return summary
 
     def save_to_db(self, result: ParseResult, user_id: Optional[int] = None, broker_name: str = "Zerodha") -> int:
         """
@@ -392,3 +727,157 @@ class ZerodhaParser:
         except sqlite3.IntegrityError:
             # Duplicate trade
             return False
+
+    def save_dividends_to_db(
+        self,
+        result: ParseResult,
+        user_id: Optional[int] = None,
+        broker_name: str = "Zerodha"
+    ) -> int:
+        """
+        Save parsed dividends to database.
+
+        Args:
+            result: ParseResult from parsing
+            user_id: User ID (optional)
+            broker_name: Broker name (default: Zerodha)
+
+        Returns:
+            Number of dividends saved
+        """
+        if not result.success or not result.dividends:
+            return 0
+
+        cursor = self.conn.cursor()
+        in_transaction = self.conn.in_transaction
+
+        try:
+            if not in_transaction:
+                cursor.execute("BEGIN IMMEDIATE")
+
+            broker_id = self._get_or_create_broker(broker_name)
+
+            count = 0
+            for dividend in result.dividends:
+                try:
+                    self.conn.execute(
+                        """INSERT INTO stock_dividends
+                        (user_id, broker_id, symbol, isin, dividend_date, quantity,
+                         dividend_per_share, gross_amount, tds_amount, net_amount, source_file)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            user_id,
+                            broker_id,
+                            dividend.symbol,
+                            dividend.isin,
+                            dividend.dividend_date.isoformat(),
+                            dividend.quantity,
+                            str(dividend.dividend_per_share),
+                            str(dividend.gross_amount),
+                            str(dividend.tds_amount),
+                            str(dividend.net_amount),
+                            result.source_file
+                        )
+                    )
+                    count += 1
+                except sqlite3.IntegrityError:
+                    # Duplicate dividend
+                    continue
+
+            if not in_transaction:
+                self.conn.commit()
+
+            return count
+
+        except Exception as e:
+            if not in_transaction:
+                self.conn.rollback()
+            raise Exception(f"Failed to save dividends: {e}") from e
+
+    def save_stt_to_db(
+        self,
+        result: ParseResult,
+        user_id: Optional[int] = None,
+        broker_name: str = "Zerodha"
+    ) -> int:
+        """
+        Save STT entries to database.
+
+        Args:
+            result: ParseResult from parsing
+            user_id: User ID (optional)
+            broker_name: Broker name (default: Zerodha)
+
+        Returns:
+            Number of STT entries saved
+        """
+        if not result.success or not result.stt_entries:
+            return 0
+
+        cursor = self.conn.cursor()
+        in_transaction = self.conn.in_transaction
+
+        try:
+            if not in_transaction:
+                cursor.execute("BEGIN IMMEDIATE")
+
+            broker_id = self._get_or_create_broker(broker_name)
+
+            count = 0
+            for entry in result.stt_entries:
+                try:
+                    self.conn.execute(
+                        """INSERT INTO stock_stt_ledger
+                        (user_id, broker_id, trade_date, symbol, trade_type,
+                         trade_category, trade_value, stt_amount, source_file)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            user_id,
+                            broker_id,
+                            entry.trade_date.isoformat(),
+                            entry.symbol,
+                            entry.trade_type.value,
+                            entry.trade_category.value,
+                            str(entry.trade_value),
+                            str(entry.stt_amount),
+                            entry.source_file
+                        )
+                    )
+                    count += 1
+                except sqlite3.IntegrityError:
+                    # Duplicate entry
+                    continue
+
+            if not in_transaction:
+                self.conn.commit()
+
+            return count
+
+        except Exception as e:
+            if not in_transaction:
+                self.conn.rollback()
+            raise Exception(f"Failed to save STT entries: {e}") from e
+
+    def save_all_to_db(
+        self,
+        result: ParseResult,
+        user_id: Optional[int] = None,
+        broker_name: str = "Zerodha"
+    ) -> dict:
+        """
+        Save all parsed data (trades, dividends, STT) to database.
+
+        Args:
+            result: ParseResult from parsing
+            user_id: User ID (optional)
+            broker_name: Broker name (default: Zerodha)
+
+        Returns:
+            Dictionary with counts: {'trades': N, 'dividends': N, 'stt': N}
+        """
+        counts = {
+            'trades': self.save_to_db(result, user_id, broker_name),
+            'dividends': self.save_dividends_to_db(result, user_id, broker_name),
+            'stt': self.save_stt_to_db(result, user_id, broker_name),
+        }
+        return counts

@@ -1,0 +1,111 @@
+.
+├── CLAUDE.md
+├── CODE_REVIEW_FIXES_SUMMARY.md
+├── Data -> /mnt/c/Sanjay/PFMS/Data/
+├── INTEGRATION_TESTS_QUICK_REFERENCE.md
+├── INTEGRATION_TESTS_SUMMARY.md
+├── INTEGRATION_TEST_GUIDE.md
+├── MF_CAMS_IMPLEMENTATION_SUMMARY.md
+├── MF_CAMS_INTEGRATION_TEST_REPORT.md
+├── PHASE_2_CHANGES_PLAN.md
+├── RUN_INTEGRATION_TESTS.md
+├── S3_S4_IMPLEMENTATION_SUMMARY.md
+├── V6.2_IMPLEMENTATION_SUMMARY.md
+├── __pycache__
+│   ├── test_epf_integration.cpython-312-pytest-9.0.2.pyc
+│   ├── test_mf_cams_integration.cpython-312-pytest-9.0.2.pyc
+│   ├── test_mf_cams_simple.cpython-312-pytest-9.0.2.pyc
+│   ├── test_nps_integration.cpython-312-pytest-9.0.2.pyc
+│   ├── test_ppf_integration.cpython-312-pytest-9.0.2.pyc
+│   └── test_stock_integration.cpython-312-pytest-9.0.2.pyc
+├── analyze_cams_file.py
+├── docs
+│   ├── ICICI_PARSER_TEST_REPORT.md
+│   ├── design
+│   ├── requirements
+│   ├── test_reports
+│   └── testcases
+├── htmlcov
+│   ├── class_index.html
+│   ├── coverage_html_cb_dd2e7eb5.js
+│   ├── favicon_32_cb_c827f16f.png
+│   ├── function_index.html
+│   ├── index.html
+│   ├── keybd_closed_cb_900cfef5.png
+│   ├── status.json
+│   ├── style_cb_9ff733b0.css
+│   ├── z_090324df0792b119___init___py.html
+│   ├── z_090324df0792b119_ppf_py.html
+│   ├── z_4ee65131245db861___init___py.html
+│   ├── z_4ee65131245db861_accounts_py.html
+│   ├── z_4ee65131245db861_audit_py.html
+│   ├── z_4ee65131245db861_currency_py.html
+│   ├── z_4ee65131245db861_database_py.html
+│   ├── z_4ee65131245db861_encryption_py.html
+│   ├── z_4ee65131245db861_exceptions_py.html
+│   ├── z_4ee65131245db861_journal_py.html
+│   ├── z_4ee65131245db861_session_py.html
+│   ├── z_686fcad720f9100d___init___py.html
+│   ├── z_686fcad720f9100d_models_py.html
+│   ├── z_686fcad720f9100d_zerodha_py.html
+│   ├── z_802a9167ab430bd7___init___py.html
+│   ├── z_802a9167ab430bd7_base_py.html
+│   ├── z_802a9167ab430bd7_hdfc_py.html
+│   ├── z_802a9167ab430bd7_icici_excel_py.html
+│   ├── z_802a9167ab430bd7_icici_py.html
+│   ├── z_802a9167ab430bd7_interest_py.html
+│   ├── z_802a9167ab430bd7_models_py.html
+│   ├── z_802a9167ab430bd7_sbi_py.html
+│   ├── z_802a9167ab430bd7_utils_py.html
+│   ├── z_8f7d3c1c5cbaaa13___init___py.html
+│   ├── z_a960becdb6b9012d___init___py.html
+│   ├── z_ac609494f875e24a___init___py.html
+│   ├── z_ac609494f875e24a_cams_py.html
+│   ├── z_ac609494f875e24a_capital_gains_py.html
+│   ├── z_ac609494f875e24a_classifier_py.html
+│   ├── z_ac609494f875e24a_models_py.html
+│   ├── z_b57abe888381282e___init___py.html
+│   ├── z_b57abe888381282e_epf_py.html
+│   ├── z_ec55834930be7c8f___init___py.html
+│   └── z_ec55834930be7c8f_nps_py.html
+├── mypy.ini
+├── pfas-project.zip
+├── prompts
+│   ├── PFAS_Claude_Code_Implementation_Guide.md
+│   ├── S1_bank_parser.md
+│   ├── S1_core.md
+│   ├── S2_mf_cams.md
+│   ├── S2_mf_karvy.md
+│   ├── S3_S4_combined.md
+│   ├── S3_stock_icici.md
+│   ├── S5_salary_form16.md
+│   ├── S7_S8_combined.md
+│   └── S9_S15_phase2.md
+├── repo_structure.txt
+├── requirements.txt
+├── scripts
+│   └── verify_module.sh
+├── src
+│   └── pfas
+├── test_epf_integration.py
+├── test_mf_cams_integration.py
+├── test_mf_cams_simple.py
+├── test_nps_integration.py
+├── test_ppf_integration.py
+├── test_stock_integration.py
+├── tests
+│   ├── __init__.py
+│   ├── __pycache__
+│   ├── conftest.py
+│   ├── fixtures
+│   ├── integration
+│   ├── manual
+│   └── unit
+└── venv
+    ├── bin
+    ├── include
+    ├── lib
+    ├── lib64 -> lib
+    └── pyvenv.cfg
+
+24 directories, 85 files
