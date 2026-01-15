@@ -716,6 +716,57 @@ CREATE TABLE IF NOT EXISTS mf_capital_gains (
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE RESTRICT
 );
 
+-- MF Holdings (point-in-time snapshot from holding statements)
+CREATE TABLE IF NOT EXISTS mf_holdings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    folio_id INTEGER,
+    amc_name TEXT NOT NULL,
+    scheme_name TEXT NOT NULL,
+    scheme_type TEXT,
+    folio_number TEXT NOT NULL,
+    investor_name TEXT,
+    units DECIMAL(15,4) NOT NULL,
+    nav DECIMAL(15,4),
+    nav_date DATE NOT NULL,
+    current_value DECIMAL(15,2) NOT NULL,
+    cost_value DECIMAL(15,2),
+    appreciation DECIMAL(15,2),
+    average_holding_days INTEGER,
+    annualized_return DECIMAL(8,4),
+    dividend_payout DECIMAL(15,2) DEFAULT 0,
+    dividend_reinvest DECIMAL(15,2) DEFAULT 0,
+    isin TEXT,
+    rta TEXT NOT NULL CHECK(rta IN ('CAMS', 'KFINTECH')),
+    source_file TEXT,
+    statement_date DATE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    -- Unique constraint: one holding per user/folio/scheme/nav_date
+    UNIQUE(user_id, folio_number, scheme_name, nav_date),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE RESTRICT,
+    FOREIGN KEY (folio_id) REFERENCES mf_folios(id) ON DELETE SET NULL
+);
+
+-- MF Holdings History (for tracking holdings over time)
+CREATE TABLE IF NOT EXISTS mf_holdings_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    snapshot_date DATE NOT NULL,
+    total_value DECIMAL(15,2) NOT NULL,
+    total_cost DECIMAL(15,2),
+    total_appreciation DECIMAL(15,2),
+    equity_value DECIMAL(15,2) DEFAULT 0,
+    debt_value DECIMAL(15,2) DEFAULT 0,
+    hybrid_value DECIMAL(15,2) DEFAULT 0,
+    weighted_xirr DECIMAL(8,4),
+    scheme_count INTEGER,
+    folio_count INTEGER,
+    source_file TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, snapshot_date),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE RESTRICT
+);
+
 -- Indexes for MF tables
 CREATE INDEX IF NOT EXISTS idx_mf_schemes_amc ON mf_schemes(amc_id);
 CREATE INDEX IF NOT EXISTS idx_mf_schemes_isin ON mf_schemes(isin);
@@ -727,6 +778,12 @@ CREATE INDEX IF NOT EXISTS idx_mf_txn_date ON mf_transactions(date);
 CREATE INDEX IF NOT EXISTS idx_mf_txn_type ON mf_transactions(transaction_type);
 CREATE INDEX IF NOT EXISTS idx_mf_txn_user ON mf_transactions(user_id);
 CREATE INDEX IF NOT EXISTS idx_mf_cg_user_fy ON mf_capital_gains(user_id, financial_year);
+CREATE INDEX IF NOT EXISTS idx_mf_holdings_user ON mf_holdings(user_id);
+CREATE INDEX IF NOT EXISTS idx_mf_holdings_nav_date ON mf_holdings(nav_date);
+CREATE INDEX IF NOT EXISTS idx_mf_holdings_folio ON mf_holdings(folio_number);
+CREATE INDEX IF NOT EXISTS idx_mf_holdings_scheme ON mf_holdings(scheme_name);
+CREATE INDEX IF NOT EXISTS idx_mf_holdings_history_user ON mf_holdings_history(user_id);
+CREATE INDEX IF NOT EXISTS idx_mf_holdings_history_date ON mf_holdings_history(snapshot_date);
 
 -- Stock Tables
 CREATE TABLE IF NOT EXISTS stock_brokers (
@@ -1398,6 +1455,206 @@ CREATE INDEX IF NOT EXISTS idx_schedule_fa_fy ON schedule_fa(financial_year);
 CREATE INDEX IF NOT EXISTS idx_deductions_user_fy ON deductions(user_id, financial_year);
 CREATE INDEX IF NOT EXISTS idx_capital_gains_user ON capital_gains(user_id);
 CREATE INDEX IF NOT EXISTS idx_capital_gains_fy ON capital_gains(financial_year);
+
+-- Phase 7: Financial Statement Foundation Tables
+
+-- User context enforcement (tracks active user for session)
+CREATE TABLE IF NOT EXISTS user_context (
+    id INTEGER PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    session_token TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Staging Tables for Normalization Pipeline
+
+-- staging_raw: Store original parsed data as-is (source-specific schema preserved)
+CREATE TABLE IF NOT EXISTS staging_raw (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_type TEXT NOT NULL,           -- CAMS, KARVY, ZERODHA, etc.
+    source_file TEXT NOT NULL,           -- Original file path
+    raw_data TEXT NOT NULL,              -- JSON blob with original data
+    row_index INTEGER DEFAULT 0,         -- Row number in source file
+    checksum TEXT NOT NULL UNIQUE,       -- MD5 hash for deduplication
+    processed_at TIMESTAMP,              -- When normalized
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_staging_raw_source ON staging_raw(source_type);
+CREATE INDEX IF NOT EXISTS idx_staging_raw_checksum ON staging_raw(checksum);
+
+-- staging_normalized: Unified transaction format for all sources
+CREATE TABLE IF NOT EXISTS staging_normalized (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    staging_raw_id INTEGER REFERENCES staging_raw(id),
+    user_id INTEGER REFERENCES users(id),  -- NULL until assigned
+
+    -- Core normalized fields
+    transaction_date DATE NOT NULL,
+    amount DECIMAL(15,2) NOT NULL,
+    transaction_type TEXT NOT NULL,        -- BUY, SELL, CREDIT, DEBIT, etc.
+
+    -- Asset identification
+    asset_category TEXT NOT NULL,          -- EQUITY, DEBT, BANK, EPF, PPF, etc.
+    asset_identifier TEXT,                 -- ISIN, symbol, account number
+    asset_name TEXT,                       -- Human-readable name
+
+    -- Optional transaction details
+    quantity DECIMAL(15,4),
+    unit_price DECIMAL(15,4),
+
+    -- Cash flow classification
+    activity_type TEXT,                    -- OPERATING, INVESTING, FINANCING
+    flow_direction TEXT,                   -- INFLOW, OUTFLOW
+
+    -- Source tracking
+    source_type TEXT NOT NULL,
+    extra_data TEXT,                       -- JSON for source-specific fields
+
+    -- Processing status
+    migrated_at TIMESTAMP,                 -- When moved to final table
+    target_table TEXT,                     -- mf_transactions, stock_trades, etc.
+    target_id INTEGER,                     -- ID in target table
+
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_staging_norm_user ON staging_normalized(user_id);
+CREATE INDEX IF NOT EXISTS idx_staging_norm_date ON staging_normalized(transaction_date);
+CREATE INDEX IF NOT EXISTS idx_staging_norm_source ON staging_normalized(source_type);
+CREATE INDEX IF NOT EXISTS idx_staging_norm_asset ON staging_normalized(asset_category);
+CREATE INDEX IF NOT EXISTS idx_staging_norm_pending ON staging_normalized(user_id) WHERE migrated_at IS NULL;
+
+-- Cash Flows Table (for Cash Flow Statement generation)
+CREATE TABLE IF NOT EXISTS cash_flows (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    flow_date DATE NOT NULL,
+    activity_type TEXT NOT NULL CHECK(activity_type IN ('OPERATING', 'INVESTING', 'FINANCING')),
+    flow_direction TEXT NOT NULL CHECK(flow_direction IN ('INFLOW', 'OUTFLOW')),
+    amount DECIMAL(15,2) NOT NULL,
+    category TEXT NOT NULL,
+    sub_category TEXT,
+    description TEXT,
+    source_table TEXT,
+    source_id INTEGER,
+    bank_account_id INTEGER REFERENCES bank_accounts(id),
+    financial_year TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_cash_flows_user ON cash_flows(user_id);
+CREATE INDEX IF NOT EXISTS idx_cash_flows_date ON cash_flows(flow_date);
+CREATE INDEX IF NOT EXISTS idx_cash_flows_activity ON cash_flows(activity_type);
+CREATE INDEX IF NOT EXISTS idx_cash_flows_fy ON cash_flows(financial_year);
+CREATE INDEX IF NOT EXISTS idx_cash_flows_category ON cash_flows(category);
+
+-- Liabilities Table (for Balance Sheet - Loans, Credit Cards)
+CREATE TABLE IF NOT EXISTS liabilities (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    liability_type TEXT NOT NULL CHECK(liability_type IN
+        ('HOME_LOAN', 'CAR_LOAN', 'PERSONAL_LOAN', 'EDUCATION_LOAN', 'CREDIT_CARD', 'OTHER')),
+    lender_name TEXT NOT NULL,
+    account_number TEXT,
+    principal_amount DECIMAL(15,2) NOT NULL,
+    outstanding_amount DECIMAL(15,2),
+    interest_rate DECIMAL(5,2),
+    emi_amount DECIMAL(15,2),
+    start_date DATE NOT NULL,
+    end_date DATE,
+    tenure_months INTEGER,
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_liabilities_user ON liabilities(user_id);
+CREATE INDEX IF NOT EXISTS idx_liabilities_type ON liabilities(liability_type);
+CREATE INDEX IF NOT EXISTS idx_liabilities_active ON liabilities(is_active);
+
+-- Liability Transactions (EMI payments, prepayments)
+CREATE TABLE IF NOT EXISTS liability_transactions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    liability_id INTEGER NOT NULL REFERENCES liabilities(id) ON DELETE CASCADE,
+    transaction_date DATE NOT NULL,
+    transaction_type TEXT NOT NULL CHECK(transaction_type IN
+        ('EMI', 'PREPAYMENT', 'DISBURSEMENT', 'INTEREST', 'FEE')),
+    amount DECIMAL(15,2) NOT NULL,
+    principal_component DECIMAL(15,2),
+    interest_component DECIMAL(15,2),
+    outstanding_after DECIMAL(15,2),
+    reference_number TEXT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(liability_id, transaction_date, amount, transaction_type)
+);
+
+CREATE INDEX IF NOT EXISTS idx_liability_txn_liability ON liability_transactions(liability_id);
+CREATE INDEX IF NOT EXISTS idx_liability_txn_date ON liability_transactions(transaction_date);
+CREATE INDEX IF NOT EXISTS idx_liability_txn_user ON liability_transactions(user_id);
+
+-- Asset Holdings Snapshot (point-in-time asset values for Balance Sheet)
+CREATE TABLE IF NOT EXISTS asset_holdings_snapshot (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    snapshot_date DATE NOT NULL,
+    asset_type TEXT NOT NULL,
+    asset_identifier TEXT,
+    asset_name TEXT,
+    quantity DECIMAL(15,4),
+    unit_price DECIMAL(15,4),
+    total_value DECIMAL(15,2) NOT NULL,
+    cost_basis DECIMAL(15,2),
+    unrealized_gain DECIMAL(15,2),
+    currency TEXT DEFAULT 'INR',
+    source_table TEXT,
+    source_id INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, snapshot_date, asset_type, asset_identifier)
+);
+
+CREATE INDEX IF NOT EXISTS idx_asset_holdings_user ON asset_holdings_snapshot(user_id);
+CREATE INDEX IF NOT EXISTS idx_asset_holdings_date ON asset_holdings_snapshot(snapshot_date);
+CREATE INDEX IF NOT EXISTS idx_asset_holdings_type ON asset_holdings_snapshot(asset_type);
+
+-- Balance Sheet Snapshots (consolidated view)
+CREATE TABLE IF NOT EXISTS balance_sheet_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    snapshot_date DATE NOT NULL,
+    total_assets DECIMAL(15,2) NOT NULL,
+    total_liabilities DECIMAL(15,2) NOT NULL,
+    net_worth DECIMAL(15,2) NOT NULL,
+    assets_breakdown TEXT,
+    liabilities_breakdown TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, snapshot_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_balance_sheet_user ON balance_sheet_snapshots(user_id);
+CREATE INDEX IF NOT EXISTS idx_balance_sheet_date ON balance_sheet_snapshots(snapshot_date);
+
+-- Cash Flow Statement Snapshots (stored statement for historical reference)
+CREATE TABLE IF NOT EXISTS cash_flow_statements (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    financial_year TEXT NOT NULL,
+    period_start DATE NOT NULL,
+    period_end DATE NOT NULL,
+    net_operating DECIMAL(15,2) NOT NULL,
+    net_investing DECIMAL(15,2) NOT NULL,
+    net_financing DECIMAL(15,2) NOT NULL,
+    net_change_in_cash DECIMAL(15,2) NOT NULL,
+    operating_breakdown TEXT,
+    investing_breakdown TEXT,
+    financing_breakdown TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, financial_year)
+);
+
+CREATE INDEX IF NOT EXISTS idx_cash_flow_stmt_user ON cash_flow_statements(user_id);
+CREATE INDEX IF NOT EXISTS idx_cash_flow_stmt_fy ON cash_flow_statements(financial_year);
 """
 
 

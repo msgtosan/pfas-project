@@ -8,6 +8,7 @@ Provides:
 - AuditLogger: Compliance audit logging
 - SessionManager: User session management with timeout
 - Field encryption utilities
+- Core models: NormalizedTransaction, CashFlow, BalanceSheetSnapshot, etc.
 """
 
 from pfas.core.database import DatabaseManager
@@ -26,8 +27,25 @@ from pfas.core.exceptions import (
     AccountNotFoundError,
     ExchangeRateNotFoundError,
 )
+from pfas.core.models import (
+    ActivityType,
+    FlowDirection,
+    AssetCategory,
+    LiabilityType,
+    CashFlowCategory,
+    NormalizedTransaction,
+    CashFlow,
+    AssetHolding,
+    Liability,
+    LiabilityTransaction,
+    BalanceSheetSnapshot,
+    CashFlowStatement,
+    get_financial_year,
+    get_fy_dates,
+)
 
 __all__ = [
+    # Database & Infrastructure
     "DatabaseManager",
     "encrypt_field",
     "decrypt_field",
@@ -40,6 +58,7 @@ __all__ = [
     "CurrencyConverter",
     "AuditLogger",
     "SessionManager",
+    # Exceptions
     "PFASError",
     "DatabaseError",
     "EncryptionError",
@@ -47,4 +66,21 @@ __all__ = [
     "SessionExpiredError",
     "AccountNotFoundError",
     "ExchangeRateNotFoundError",
+    # Core Models - Enums
+    "ActivityType",
+    "FlowDirection",
+    "AssetCategory",
+    "LiabilityType",
+    "CashFlowCategory",
+    # Core Models - Dataclasses
+    "NormalizedTransaction",
+    "CashFlow",
+    "AssetHolding",
+    "Liability",
+    "LiabilityTransaction",
+    "BalanceSheetSnapshot",
+    "CashFlowStatement",
+    # Utility Functions
+    "get_financial_year",
+    "get_fy_dates",
 ]

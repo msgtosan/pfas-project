@@ -1,0 +1,84 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pfas"
+version = "0.2.0"
+description = "Personal Financial Accounting System for Indian Tax Residents"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+authors = [
+    {name = "PFAS Team"}
+]
+keywords = ["finance", "tax", "accounting", "india"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Office/Business :: Financial :: Accounting",
+]
+
+dependencies = [
+    "PyPDF2>=3.0.0",
+    "pdfplumber>=0.9.0",
+    "tabula-py>=2.7.0",
+    "reportlab>=4.0.0",
+    "openpyxl>=3.1.0",
+    "pandas>=2.0.0",
+    "xlrd>=2.0.1",
+    "rapidfuzz>=3.0.0",
+    "cryptography>=41.0.0",
+    "keyring>=24.0.0",
+    "click>=8.1.0",
+    "rich>=13.0.0",
+    "jsonschema>=4.19.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
+    "pytest-asyncio>=0.21.0",
+]
+sqlcipher = [
+    "sqlcipher3>=0.5.0",
+]
+
+[project.scripts]
+pfas-report = "pfas.cli.reports_cli:main"
+pfas-tax = "pfas.cli.advance_tax_cli:main"
+mf-analyzer = "pfas.cli.mf_analyzer_cli:main"
+
+[project.urls]
+Homepage = "https://github.com/pfas-project/pfas"
+Documentation = "https://github.com/pfas-project/pfas#readme"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-dir]
+"" = "src"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
+
+[tool.coverage.run]
+source = ["src/pfas"]
+branch = true
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+]

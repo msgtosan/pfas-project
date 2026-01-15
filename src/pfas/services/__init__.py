@@ -5,14 +5,23 @@ Provides services for:
 - Income Aggregation: Pre-computed income summaries
 - Statement Tracking: Prevents re-parsing of processed files
 - Advance Tax Calculator: Complete tax computation
+- Cash Flow Statement: Cash flow statement generation
+- Balance Sheet: Balance sheet snapshot generation
+- Portfolio Valuation: Holdings valuation and XIRR
+- Liabilities: Loan and liability management
 """
 
 from .tax_rules_service import TaxRulesService, TaxSlab, CapitalGainsRate
 from .income_aggregation_service import IncomeAggregationService, IncomeRecord
 from .statement_tracker import StatementTracker
 from .advance_tax_calculator import AdvanceTaxCalculator, AdvanceTaxResult
+from .cash_flow_service import CashFlowStatementService
+from .balance_sheet_service import BalanceSheetService
+from .portfolio_valuation_service import PortfolioValuationService, PortfolioSummary, XIRRResult
+from .liabilities_service import LiabilitiesService, LoanSummary, AmortizationEntry
 
 __all__ = [
+    # Tax Services
     "TaxRulesService",
     "TaxSlab",
     "CapitalGainsRate",
@@ -21,4 +30,15 @@ __all__ = [
     "StatementTracker",
     "AdvanceTaxCalculator",
     "AdvanceTaxResult",
+    # Financial Statement Services
+    "CashFlowStatementService",
+    "BalanceSheetService",
+    # Portfolio Services
+    "PortfolioValuationService",
+    "PortfolioSummary",
+    "XIRRResult",
+    # Liability Services
+    "LiabilitiesService",
+    "LoanSummary",
+    "AmortizationEntry",
 ]

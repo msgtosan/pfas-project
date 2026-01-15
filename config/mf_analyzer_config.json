@@ -1,0 +1,153 @@
+{
+  "$schema": "./mf_analyzer_schema.json",
+  "version": "1.0.0",
+  "description": "MF Analyzer configuration for user Sanjay",
+
+  "user": {
+    "name": "Sanjay",
+    "pan_prefix": "XXXXX",
+    "email": "sanjay@example.com"
+  },
+
+  "paths": {
+    "data_root": "Data/Users/Sanjay",
+    "mf_folder": "Mutual-Fund",
+    "reports_output": "Reports/Mutual-Fund",
+    "database": "pfas.db"
+  },
+
+  "file_patterns": {
+    "cams": {
+      "patterns": ["*CAMS*", "*cams*", "*CG_FY*"],
+      "extensions": [".xlsx", ".xls", ".pdf"],
+      "exclude_patterns": ["~$*", "*.tmp"]
+    },
+    "karvy": {
+      "patterns": ["*Karvy*", "*KArvy*", "*KARVY*", "*KFintech*", "*kfintech*"],
+      "extensions": [".xlsx", ".xls", ".pdf"],
+      "exclude_patterns": ["~$*", "*.tmp"]
+    }
+  },
+
+  "statement_types": {
+    "capital_gains": {
+      "cams_sheets": ["TRXN_DETAILS", "Transaction_Details"],
+      "karvy_sheets": ["Trasaction_Details", "Transaction_Details"],
+      "cams_header_row": 3,
+      "karvy_header_row": 4
+    },
+    "holdings": {
+      "cams_sheets": ["Holdings", "HOLDINGS", "Summary"],
+      "karvy_sheets": ["By Mutual Fund", "By Investor", "Holdings"],
+      "cams_header_row": 0,
+      "karvy_header_row": 0
+    }
+  },
+
+  "field_mappings": {
+    "cams_holdings": {
+      "AMCName": "amc_name",
+      "Scheme": "scheme_name",
+      "Type": "scheme_type",
+      "Folio": "folio_number",
+      "InvestorName": "investor_name",
+      "UnitBal": "units",
+      "NAVDate": "nav_date",
+      "CurrentValue": "current_value",
+      "CostValue": "cost_value",
+      "Appreciation": "appreciation",
+      "WtgAvg": "average_holding_days",
+      "Annualised XIRR": "annualized_return",
+      "ISIN": "isin"
+    },
+    "karvy_holdings": {
+      "Scheme Name": "scheme_name",
+      "Folio": "folio_number",
+      "Investor Name": "investor_name",
+      "Unit Balance": "units",
+      "Nav Date": "nav_date",
+      "Current Value (Rs.)": "current_value",
+      "Cost Value (Rs.)": "cost_value",
+      "Appreciation (Rs.)": "appreciation",
+      "AvgAgeDays": "average_holding_days",
+      "Annualized Yield (%)": "annualized_return",
+      "Dividend Payout": "dividend_payout",
+      "Dividend Re-Invest": "dividend_reinvest"
+    }
+  },
+
+  "value_transforms": {
+    "current_value": {
+      "type": "decimal",
+      "remove_chars": ["Rs.", "Rs", ",", " "],
+      "precision": 2
+    },
+    "cost_value": {
+      "type": "decimal",
+      "remove_chars": ["Rs.", "Rs", ",", " "],
+      "precision": 2
+    },
+    "appreciation": {
+      "type": "decimal",
+      "remove_chars": ["Rs.", "Rs", ",", " "],
+      "precision": 2
+    },
+    "units": {
+      "type": "decimal",
+      "precision": 4
+    },
+    "annualized_return": {
+      "type": "decimal",
+      "remove_chars": ["%", " "],
+      "precision": 2
+    },
+    "nav_date": {
+      "type": "date",
+      "formats": ["%d-%b-%Y", "%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y"]
+    },
+    "average_holding_days": {
+      "type": "integer"
+    }
+  },
+
+  "amc_name_extraction": {
+    "patterns": [
+      {"regex": "^(.*?)\\s+(Direct|Regular)", "group": 1},
+      {"regex": "^(.*?)\\s+Fund", "group": 1},
+      {"regex": "^(.*?)\\s+-", "group": 1}
+    ],
+    "fallback": "Unknown AMC"
+  },
+
+  "report_settings": {
+    "excel": {
+      "sheets": ["Summary", "By Category", "By AMC", "By Folio", "Transactions", "Holdings History"],
+      "date_format": "DD-MMM-YYYY",
+      "currency_format": "#,##0.00",
+      "percentage_format": "0.00%"
+    },
+    "summary_metrics": [
+      "total_current_value",
+      "total_cost_value",
+      "total_appreciation",
+      "weighted_xirr",
+      "equity_allocation_pct",
+      "debt_allocation_pct",
+      "hybrid_allocation_pct"
+    ]
+  },
+
+  "processing": {
+    "skip_zero_holdings": true,
+    "use_xirr_over_yield": true,
+    "classify_unknown_schemes": true,
+    "detect_duplicates": true,
+    "max_history_years": 25
+  },
+
+  "logging": {
+    "level": "INFO",
+    "file": "mf_analyzer.log",
+    "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  }
+}

@@ -1,15 +1,17 @@
 import pytest
-from pfas.core.database import init_database
+from pfas.core.database import DatabaseManager
 from pfas.core.accounts import setup_chart_of_accounts
 
 @pytest.fixture(scope="session")
 def test_db():
     """Create a test database for integration tests."""
-    db_path = ":memory:"  # In-memory for speed
-    conn = init_database(db_path, password="test_password")
+    DatabaseManager.reset_instance()
+    db = DatabaseManager()
+    conn = db.init(":memory:", "test_password")
     setup_chart_of_accounts(conn)
     yield conn
-    conn.close()
+    db.close()
+    DatabaseManager.reset_instance()
 
 @pytest.fixture
 def clean_db(test_db):

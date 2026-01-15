@@ -37,6 +37,12 @@ EQUITY_KEYWORDS = [
     'MOMENTUM',
     'ELSS',  # Equity-Linked Savings Scheme
     'TAX SAVER',
+    'GROWTH FUND',  # Generic equity fund names
+    'VISION FUND',
+    'OPPORTUNITIES',
+    'CONTRA',
+    'DIVIDEND YIELD',
+    'DIVERSIFIED',
 ]
 
 # Debt fund keywords (<65% equity exposure)

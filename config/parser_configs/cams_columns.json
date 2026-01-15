@@ -1,0 +1,133 @@
+{
+  "source_type": "CAMS",
+  "description": "CAMS CAS Capital Gains Statement column mappings",
+  "sheet_names": ["TRXN_DETAILS", "Transaction_Details"],
+  "header_row": 3,
+  "file_patterns": ["cams", "CAMS", "CG_FY"],
+
+  "mappings": [
+    {
+      "source_column": "AMC Name",
+      "target_field": "amc_name",
+      "transform": "strip",
+      "required": false
+    },
+    {
+      "source_column": "Folio No",
+      "target_field": "folio_number",
+      "transform": "strip",
+      "required": true
+    },
+    {
+      "source_column": "ASSET CLASS",
+      "target_field": "asset_class",
+      "transform": "upper",
+      "required": true,
+      "value_mapping": {
+        "EQUITY": "MF_EQUITY",
+        "DEBT": "MF_DEBT",
+        "HYBRID": "MF_HYBRID",
+        "CASH": "MF_DEBT"
+      }
+    },
+    {
+      "source_column": "Scheme Name",
+      "target_field": "asset_name",
+      "transform": "strip",
+      "required": true
+    },
+    {
+      "source_column": "Scheme Name",
+      "target_field": "asset_identifier",
+      "transform": "extract_isin",
+      "required": false
+    },
+    {
+      "source_column": "Desc",
+      "target_field": "transaction_type",
+      "transform": "upper",
+      "required": true,
+      "value_mapping": {
+        "PURCHASE": "BUY",
+        "REDEMPTION": "SELL",
+        "SYSTEMATIC INVESTMENT": "BUY",
+        "SIP": "BUY",
+        "SWITCH IN": "BUY",
+        "SWITCH OUT": "SELL",
+        "DIVIDEND PAYOUT": "DIVIDEND",
+        "DIVIDEND REINVEST": "DIVIDEND_REINVEST"
+      }
+    },
+    {
+      "source_column": "Date",
+      "target_field": "date",
+      "transform": "parse_date_dmy",
+      "required": true
+    },
+    {
+      "source_column": "Units",
+      "target_field": "quantity",
+      "transform": "parse_decimal",
+      "required": false
+    },
+    {
+      "source_column": "Amount",
+      "target_field": "amount",
+      "transform": "parse_decimal",
+      "required": true
+    },
+    {
+      "source_column": "Price",
+      "target_field": "unit_price",
+      "transform": "parse_decimal",
+      "required": false
+    },
+    {
+      "source_column": "STT",
+      "target_field": "stt",
+      "transform": "parse_decimal",
+      "required": false
+    },
+    {
+      "source_column": "Short Term",
+      "target_field": "stcg",
+      "transform": "parse_decimal",
+      "required": false
+    },
+    {
+      "source_column": "Long Term With Index",
+      "target_field": "ltcg_indexed",
+      "transform": "parse_decimal",
+      "required": false
+    },
+    {
+      "source_column": "Long Term Without Index",
+      "target_field": "ltcg_non_indexed",
+      "transform": "parse_decimal",
+      "required": false
+    },
+    {
+      "source_column": "NAV As On 31/01/2018 (Grandfathered NAV)",
+      "target_field": "grandfathered_nav",
+      "transform": "parse_decimal",
+      "required": false
+    },
+    {
+      "source_column": "Market Value As On 31/01/2018 (Grandfathered Value)",
+      "target_field": "grandfathered_value",
+      "transform": "parse_decimal",
+      "required": false
+    }
+  ],
+
+  "derived_fields": {
+    "activity_type": "INVESTING",
+    "flow_direction": {
+      "BUY": "OUTFLOW",
+      "SELL": "INFLOW",
+      "DIVIDEND": "INFLOW",
+      "DIVIDEND_REINVEST": "INFLOW"
+    },
+    "source_type": "CAMS"
+  }
+}

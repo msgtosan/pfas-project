@@ -5,10 +5,17 @@ from pathlib import Path
 from datetime import datetime, date as date_type
 from decimal import Decimal
 from typing import List, Optional
-import sqlite3
 import re
 import logging
 import warnings
+
+# Handle both SQLCipher and regular sqlite3
+try:
+    import sqlcipher3 as sqlite3
+    from sqlcipher3.dbapi2 import IntegrityError as SQLCipherIntegrityError
+except ImportError:
+    import sqlite3
+    SQLCipherIntegrityError = sqlite3.IntegrityError  # Fallback to same type
 
 from .models import MFTransaction, MFScheme, AssetClass, TransactionType, ParseResult
 from .classifier import classify_scheme
@@ -599,7 +606,7 @@ class KarvyParser:
                 )
             )
             return True
-        except sqlite3.IntegrityError:
+        except (sqlite3.IntegrityError, SQLCipherIntegrityError):
             self._duplicate_count += 1
             logger.debug(
                 f"Duplicate transaction skipped: {txn.scheme.name} "
