@@ -3,7 +3,7 @@
 import pandas as pd
 from pathlib import Path
 from datetime import date as date_type
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from dataclasses import dataclass, field
 from typing import List, Optional, Dict
 import sqlite3
@@ -99,8 +99,80 @@ class NPSParser:
             return result
 
         try:
-            # Read CSV
-            df = pd.read_csv(file_path)
+            # Detect file type and read accordingly
+            suffix = file_path.suffix.lower()
+            if suffix == '.csv':
+                df = pd.read_csv(file_path, header=None)  # Read without header first
+            elif suffix in ['.xlsx', '.xls']:
+                df = pd.read_excel(file_path, header=None)  # Read without header first
+            else:
+                result.add_error(f"Unsupported file format: {suffix}")
+                return result
+
+            # Validate we have data
+            if len(df) == 0:
+                result.add_error("File is empty (no data rows)")
+                return result
+
+            # Find the header row by looking for PRAN or Transaction Date keywords
+            header_row = self._find_header_row(df)
+            if header_row is None:
+                result.add_error("Could not find header row with expected columns (PRAN, Transaction Date, etc.)")
+                return result
+
+            # Re-read with correct header
+            if suffix == '.csv':
+                df = pd.read_csv(file_path, header=header_row)
+            else:
+                df = pd.read_excel(file_path, header=header_row)
+
+            # Normalize column names for comparison
+            df.columns = df.columns.str.strip()
+            actual_cols = set(df.columns.str.upper())
+
+            # Check for required columns (flexible matching)
+            required_cols = {'PRAN', 'TRANSACTION DATE', 'TIER', 'AMOUNT'}
+            # Try alternative column names
+            col_aliases = {
+                'PRAN': ['PRAN', 'PRAN NO', 'PRAN NUMBER', 'ACCOUNT NO'],
+                'TRANSACTION DATE': ['TRANSACTION DATE', 'DATE', 'TXN DATE', 'TRANS DATE'],
+                'TIER': ['TIER', 'TIER TYPE', 'ACCOUNT TIER'],
+                'AMOUNT': ['AMOUNT', 'CONTRIBUTION', 'VALUE', 'CREDIT']
+            }
+
+            # Find and rename columns to standard names
+            col_mapping = {}
+            missing_cols = []
+            for req_col, aliases in col_aliases.items():
+                found = False
+                for alias in aliases:
+                    if alias in actual_cols:
+                        # Find the actual case-sensitive column name
+                        for col in df.columns:
+                            if col.upper() == alias:
+                                col_mapping[col] = req_col.title().replace('_', ' ')
+                                if req_col == 'PRAN':
+                                    col_mapping[col] = 'PRAN'
+                                elif req_col == 'TRANSACTION DATE':
+                                    col_mapping[col] = 'Transaction Date'
+                                elif req_col == 'TIER':
+                                    col_mapping[col] = 'Tier'
+                                elif req_col == 'AMOUNT':
+                                    col_mapping[col] = 'Amount'
+                                found = True
+                                break
+                        if found:
+                            break
+                if not found:
+                    missing_cols.append(req_col)
+
+            if missing_cols:
+                result.add_error(f"Missing required columns: {missing_cols}. Found: {list(df.columns)}")
+                return result
+
+            # Rename columns to standard names
+            if col_mapping:
+                df = df.rename(columns=col_mapping)
 
             # Parse transactions
             transactions = self._parse_transactions(df, result)
@@ -111,10 +183,14 @@ class NPSParser:
                 result.account = NPSAccount(pran=transactions[0].pran)
 
             if len(transactions) == 0:
-                result.add_warning("No transactions found")
+                result.add_warning("No valid transactions found in file")
 
+        except pd.errors.EmptyDataError:
+            result.add_error("File is empty or contains no valid data")
+        except pd.errors.ParserError as e:
+            result.add_error(f"CSV/Excel parsing error: {str(e)}")
         except Exception as e:
-            result.add_error(f"Failed to parse CSV: {str(e)}")
+            result.add_error(f"Failed to parse file: {str(e)}")
 
         return result
 
@@ -210,6 +286,29 @@ class NPSParser:
         # If not found in description, assume employee contribution
         return 'EMPLOYEE'
 
+    def _find_header_row(self, df: pd.DataFrame) -> Optional[int]:
+        """
+        Find the row index containing column headers.
+
+        Scans first 20 rows for keywords like PRAN, Transaction Date, etc.
+
+        Args:
+            df: DataFrame read without headers
+
+        Returns:
+            Row index of header row, or None if not found
+        """
+        header_keywords = ['PRAN', 'TRANSACTION', 'DATE', 'TIER', 'AMOUNT', 'NAV', 'UNITS']
+
+        for idx in range(min(20, len(df))):
+            row_values = df.iloc[idx].astype(str).str.upper()
+            # Check if this row contains multiple header keywords
+            matches = sum(1 for kw in header_keywords if any(kw in val for val in row_values))
+            if matches >= 3:  # At least 3 keywords found
+                return idx
+
+        return None
+
     def _get_financial_year(self, txn_date: date_type) -> str:
         """Get financial year for a transaction date."""
         if txn_date.month >= 4:  # Apr-Mar
@@ -225,8 +324,11 @@ class NPSParser:
         try:
             # Remove commas and convert
             clean_value = str(value).replace(",", "").strip()
+            # Handle negative values in parentheses: (1000) -> -1000
+            if clean_value.startswith('(') and clean_value.endswith(')'):
+                clean_value = '-' + clean_value[1:-1]
             return Decimal(clean_value)
-        except:
+        except (ValueError, InvalidOperation):
             return Decimal("0")
 
     def calculate_deductions(self, transactions: List[NPSTransaction],

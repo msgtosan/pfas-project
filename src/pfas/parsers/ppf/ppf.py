@@ -1,12 +1,15 @@
 """PPF Statement parser."""
 
+import logging
 import pandas as pd
 from pathlib import Path
 from datetime import date as date_type, timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from dataclasses import dataclass, field
 from typing import List, Optional
 import sqlite3
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -114,11 +117,29 @@ class PPFParser:
         try:
             # Read Excel/CSV
             if file_path.suffix.lower() in ['.xlsx', '.xls']:
-                df = pd.read_excel(file_path)
+                try:
+                    df = pd.read_excel(file_path)
+                except ValueError as ve:
+                    if "Worksheet index" in str(ve) or "0 worksheets found" in str(ve):
+                        result.add_error(f"Excel file has no worksheets (corrupted or empty): {file_path.name}")
+                        return result
+                    raise
             elif file_path.suffix.lower() == '.csv':
                 df = pd.read_csv(file_path)
             else:
                 result.add_error(f"Unsupported format: {file_path.suffix}")
+                return result
+
+            # Validate we have data
+            if len(df) == 0:
+                result.add_error("File is empty (no data rows)")
+                return result
+
+            # Validate required columns exist
+            df.columns = df.columns.str.strip().str.upper()
+            date_cols = {'DATE', 'TRANSACTION DATE', 'TXN DATE', 'VALUE DATE'}
+            if not any(col in df.columns for col in date_cols):
+                result.add_error(f"Date column not found. Found columns: {list(df.columns)}")
                 return result
 
             # Parse transactions
@@ -155,7 +176,7 @@ class PPFParser:
         - Balance / Closing Balance
 
         Args:
-            df: DataFrame from Excel/CSV
+            df: DataFrame from Excel/CSV (columns already normalized to uppercase)
             result: ParseResult to add warnings to
 
         Returns:
@@ -163,10 +184,7 @@ class PPFParser:
         """
         transactions = []
 
-        # Normalize column names
-        df.columns = df.columns.str.strip().str.upper()
-
-        # Find date column
+        # Find date column (columns already normalized to uppercase)
         date_col = None
         for col in ['DATE', 'TRANSACTION DATE', 'TXN DATE', 'VALUE DATE']:
             if col in df.columns:
@@ -174,6 +192,7 @@ class PPFParser:
                 break
 
         if not date_col:
+            # This shouldn't happen since we validated in parse(), but handle it anyway
             result.add_error("Date column not found")
             return transactions
 
@@ -287,7 +306,8 @@ class PPFParser:
             # Remove commas and convert
             clean_value = str(value).replace(",", "").strip()
             return Decimal(clean_value)
-        except:
+        except (ValueError, InvalidOperation) as e:
+            logger.debug(f"Could not convert '{value}' to Decimal: {e}")
             return Decimal("0")
 
     def calculate_80c_eligible(self, transactions: List[PPFTransaction], fy: str) -> Decimal:

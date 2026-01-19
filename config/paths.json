@@ -1,0 +1,20 @@
+{
+  "_comment": "All paths are relative to the data root passed to PathResolver",
+  "users_base": "Users",
+  "global": {
+    "config_dir": "config",
+    "shared_masters": "shared/masters"
+  },
+  "per_user": {
+    "db_file": "db/finance.db",
+    "db_backup_suffix": ".bak",
+    "user_config_dir": "config",
+    "inbox": "inbox",
+    "archive": "archive",
+    "reports": "reports"
+  },
+  "report_naming": {
+    "pattern": "{user}_{asset}_{report_type}_{date}[_v{version}].xlsx",
+    "date_format": "YYYY-MM-DD"
+  }
+}

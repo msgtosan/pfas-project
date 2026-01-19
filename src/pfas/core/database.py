@@ -767,6 +767,87 @@ CREATE TABLE IF NOT EXISTS mf_holdings_history (
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE RESTRICT
 );
 
+-- MF FY Summary (aggregated FY analysis by scheme type/amc/rta)
+CREATE TABLE IF NOT EXISTS mf_fy_summary (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    financial_year TEXT NOT NULL,
+    scheme_type TEXT,
+    amc_name TEXT,
+    rta TEXT,
+    opening_units DECIMAL(15,4) DEFAULT 0,
+    opening_value DECIMAL(15,2) DEFAULT 0,
+    opening_cost DECIMAL(15,2) DEFAULT 0,
+    purchase_units DECIMAL(15,4) DEFAULT 0,
+    purchase_amount DECIMAL(15,2) DEFAULT 0,
+    purchase_count INTEGER DEFAULT 0,
+    redemption_units DECIMAL(15,4) DEFAULT 0,
+    redemption_amount DECIMAL(15,2) DEFAULT 0,
+    redemption_count INTEGER DEFAULT 0,
+    switch_in_units DECIMAL(15,4) DEFAULT 0,
+    switch_in_amount DECIMAL(15,2) DEFAULT 0,
+    switch_out_units DECIMAL(15,4) DEFAULT 0,
+    switch_out_amount DECIMAL(15,2) DEFAULT 0,
+    dividend_payout DECIMAL(15,2) DEFAULT 0,
+    dividend_reinvest DECIMAL(15,2) DEFAULT 0,
+    stcg_realized DECIMAL(15,2) DEFAULT 0,
+    ltcg_realized DECIMAL(15,2) DEFAULT 0,
+    closing_units DECIMAL(15,4) DEFAULT 0,
+    closing_value DECIMAL(15,2) DEFAULT 0,
+    closing_cost DECIMAL(15,2) DEFAULT 0,
+    absolute_return DECIMAL(10,4),
+    xirr DECIMAL(10,4),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, financial_year, scheme_type, amc_name, rta),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE RESTRICT
+);
+
+-- MF Year-over-Year Growth (for tracking portfolio growth)
+CREATE TABLE IF NOT EXISTS mf_yoy_growth (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    base_year TEXT NOT NULL,
+    compare_year TEXT NOT NULL,
+    base_value DECIMAL(15,2) DEFAULT 0,
+    compare_value DECIMAL(15,2) DEFAULT 0,
+    value_change DECIMAL(15,2) DEFAULT 0,
+    value_change_pct DECIMAL(10,4),
+    equity_growth_pct DECIMAL(10,4),
+    debt_growth_pct DECIMAL(10,4),
+    hybrid_growth_pct DECIMAL(10,4),
+    schemes_added INTEGER DEFAULT 0,
+    schemes_removed INTEGER DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, base_year, compare_year),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE RESTRICT
+);
+
+-- MF Capital Gains Reconciliation (for reconciling calculated vs reported CG)
+CREATE TABLE IF NOT EXISTS mf_cg_reconciliation (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    financial_year TEXT NOT NULL,
+    rta TEXT NOT NULL,
+    asset_class TEXT,
+    calc_stcg DECIMAL(15,2) DEFAULT 0,
+    calc_ltcg DECIMAL(15,2) DEFAULT 0,
+    calc_total_gain DECIMAL(15,2) DEFAULT 0,
+    reported_stcg DECIMAL(15,2) DEFAULT 0,
+    reported_ltcg DECIMAL(15,2) DEFAULT 0,
+    reported_total_gain DECIMAL(15,2) DEFAULT 0,
+    stcg_difference DECIMAL(15,2) DEFAULT 0,
+    ltcg_difference DECIMAL(15,2) DEFAULT 0,
+    total_difference DECIMAL(15,2) DEFAULT 0,
+    is_reconciled BOOLEAN DEFAULT FALSE,
+    reconciled_at TIMESTAMP,
+    notes TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, financial_year, rta, asset_class),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE RESTRICT
+);
+
 -- Indexes for MF tables
 CREATE INDEX IF NOT EXISTS idx_mf_schemes_amc ON mf_schemes(amc_id);
 CREATE INDEX IF NOT EXISTS idx_mf_schemes_isin ON mf_schemes(isin);
@@ -784,6 +865,39 @@ CREATE INDEX IF NOT EXISTS idx_mf_holdings_folio ON mf_holdings(folio_number);
 CREATE INDEX IF NOT EXISTS idx_mf_holdings_scheme ON mf_holdings(scheme_name);
 CREATE INDEX IF NOT EXISTS idx_mf_holdings_history_user ON mf_holdings_history(user_id);
 CREATE INDEX IF NOT EXISTS idx_mf_holdings_history_date ON mf_holdings_history(snapshot_date);
+CREATE INDEX IF NOT EXISTS idx_mf_fy_summary_user_fy ON mf_fy_summary(user_id, financial_year);
+CREATE INDEX IF NOT EXISTS idx_mf_yoy_growth_user ON mf_yoy_growth(user_id);
+CREATE INDEX IF NOT EXISTS idx_mf_cg_reconciliation_user_fy ON mf_cg_reconciliation(user_id, financial_year);
+
+-- Comprehensive Capital Gains Reconciliation (FIFO vs RTA)
+CREATE TABLE IF NOT EXISTS mf_capital_gains_reconciliation (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    financial_year TEXT NOT NULL,
+    -- FIFO calculated values
+    fifo_equity_ltcg DECIMAL(15,2) DEFAULT 0,
+    fifo_equity_stcg DECIMAL(15,2) DEFAULT 0,
+    fifo_debt_ltcg DECIMAL(15,2) DEFAULT 0,
+    fifo_debt_stcg DECIMAL(15,2) DEFAULT 0,
+    fifo_hybrid_ltcg DECIMAL(15,2) DEFAULT 0,
+    fifo_hybrid_stcg DECIMAL(15,2) DEFAULT 0,
+    -- RTA provided values
+    rta_equity_ltcg DECIMAL(15,2) DEFAULT 0,
+    rta_equity_stcg DECIMAL(15,2) DEFAULT 0,
+    rta_debt_ltcg DECIMAL(15,2) DEFAULT 0,
+    rta_debt_stcg DECIMAL(15,2) DEFAULT 0,
+    rta_hybrid_ltcg DECIMAL(15,2) DEFAULT 0,
+    rta_hybrid_stcg DECIMAL(15,2) DEFAULT 0,
+    -- Reconciliation
+    reconciliation_status TEXT DEFAULT 'NOT_RECONCILED',
+    reconciliation_notes TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, financial_year),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE RESTRICT
+);
+
+CREATE INDEX IF NOT EXISTS idx_mf_capital_gains_recon_user_fy ON mf_capital_gains_reconciliation(user_id, financial_year);
 
 -- Stock Tables
 CREATE TABLE IF NOT EXISTS stock_brokers (
@@ -1655,6 +1769,55 @@ CREATE TABLE IF NOT EXISTS cash_flow_statements (
 
 CREATE INDEX IF NOT EXISTS idx_cash_flow_stmt_user ON cash_flow_statements(user_id);
 CREATE INDEX IF NOT EXISTS idx_cash_flow_stmt_fy ON cash_flow_statements(financial_year);
+
+-- Reconciliation Audit Table (for comparing DB vs statement file data)
+CREATE TABLE IF NOT EXISTS reconciliation_audit (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    asset_type TEXT NOT NULL,
+    audit_date DATE NOT NULL,
+    source_file TEXT NOT NULL,
+    scheme_name TEXT,
+    folio_number TEXT,
+    field_name TEXT NOT NULL,
+    db_value TEXT,
+    file_value TEXT,
+    difference REAL,
+    severity TEXT NOT NULL CHECK(severity IN ('INFO', 'WARNING', 'ERROR')),
+    resolved INTEGER DEFAULT 0,
+    resolution_notes TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    resolved_at TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_reconciliation_audit_user ON reconciliation_audit(user_id);
+CREATE INDEX IF NOT EXISTS idx_reconciliation_audit_date ON reconciliation_audit(audit_date);
+CREATE INDEX IF NOT EXISTS idx_reconciliation_audit_asset ON reconciliation_audit(asset_type);
+CREATE INDEX IF NOT EXISTS idx_reconciliation_audit_severity ON reconciliation_audit(severity);
+CREATE INDEX IF NOT EXISTS idx_reconciliation_audit_unresolved ON reconciliation_audit(user_id) WHERE resolved = 0;
+
+-- Ingestion Log Table (tracks file processing for idempotency)
+CREATE TABLE IF NOT EXISTS ingestion_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    source_file TEXT NOT NULL,
+    file_hash TEXT NOT NULL,
+    asset_type TEXT NOT NULL,
+    rta_source TEXT,
+    records_processed INTEGER DEFAULT 0,
+    records_skipped INTEGER DEFAULT 0,
+    status TEXT NOT NULL CHECK(status IN ('PENDING', 'PROCESSING', 'COMPLETED', 'FAILED', 'ARCHIVED')),
+    error_message TEXT,
+    archive_path TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    completed_at TIMESTAMP,
+    UNIQUE(user_id, file_hash)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ingestion_log_user ON ingestion_log(user_id);
+CREATE INDEX IF NOT EXISTS idx_ingestion_log_file ON ingestion_log(source_file);
+CREATE INDEX IF NOT EXISTS idx_ingestion_log_hash ON ingestion_log(file_hash);
+CREATE INDEX IF NOT EXISTS idx_ingestion_log_status ON ingestion_log(status);
 """
 
 

@@ -4,7 +4,10 @@ import re
 import pdfplumber
 from pathlib import Path
 from datetime import datetime, date as date_type
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
+import logging
+
+logger = logging.getLogger(__name__)
 from dataclasses import dataclass, field
 from typing import List, Optional
 import sqlite3
@@ -141,6 +144,10 @@ class EPFParser:
             # Parse account information
             result.account = self._parse_account_info(text)
 
+            # Try to extract UAN from filename if not found in PDF
+            if not result.account:
+                result.account = self._account_from_filename(file_path)
+
             # Parse financial year
             fy_match = re.search(self.FY_PATTERN, text)
             financial_year = f"{fy_match.group(1)}-{fy_match.group(2)}" if fy_match else ""
@@ -151,8 +158,13 @@ class EPFParser:
             # Parse interest
             result.interest = self._parse_interest(text, financial_year)
 
-            if not result.account:
-                result.add_error("Failed to extract account information")
+            # Validate results - if we have transactions, consider it a success
+            if not result.account and len(result.transactions) == 0:
+                result.add_error("Failed to extract account information and no transactions found")
+            elif not result.account:
+                result.add_warning("Account information not found in PDF - transactions extracted")
+            elif len(result.transactions) == 0:
+                result.add_warning("No transactions found in EPF passbook")
 
         except Exception as e:
             result.add_error(f"Failed to parse PDF: {str(e)}")
@@ -185,11 +197,12 @@ class EPFParser:
         """
         try:
             info = {}
-            for field, pattern in self.ACCOUNT_PATTERNS.items():
+            for field_name, pattern in self.ACCOUNT_PATTERNS.items():
                 match = re.search(pattern, text, re.IGNORECASE | re.MULTILINE)
-                info[field] = match.group(1).strip() if match else ""
+                info[field_name] = match.group(1).strip() if match else ""
 
             if not info.get('uan') or not info.get('member_id'):
+                logger.debug("Missing UAN or Member ID in EPF passbook")
                 return None
 
             return EPFAccount(
@@ -199,8 +212,55 @@ class EPFParser:
                 member_id=info['member_id'],
                 member_name=info['member_name']
             )
-        except Exception:
+        except (KeyError, AttributeError, IndexError) as e:
+            logger.warning(f"Error parsing EPF account info: {e}")
             return None
+
+    def _account_from_filename(self, file_path: Path) -> Optional[EPFAccount]:
+        """
+        Try to extract account info from filename.
+
+        Common filename patterns:
+        - APHYD00476720000003193_2025.pdf (establishment_id + member_id)
+        - EPF_100123456789_2024.pdf (UAN)
+        - 2026-01-17_Sanjay_APHYD00476720000003193_2025.pdf (date_user_id_year)
+
+        Args:
+            file_path: Path to the EPF file
+
+        Returns:
+            EPFAccount with partial info, or None
+        """
+        filename = file_path.stem  # filename without extension
+
+        # Try to extract UAN (12 digits starting with 10)
+        uan_match = re.search(r'\b(10\d{10})\b', filename)
+
+        # Try to extract establishment_id + member_id pattern (e.g., APHYD00476720000003193)
+        estab_match = re.search(r'([A-Z]{5}\d{17})', filename, re.IGNORECASE)
+
+        if uan_match:
+            return EPFAccount(
+                uan=uan_match.group(1),
+                establishment_id="",
+                establishment_name="",
+                member_id="",
+                member_name=""
+            )
+        elif estab_match:
+            combined = estab_match.group(1)
+            # Split into establishment_id (first 5+7 chars) and member_id (last 10 chars)
+            establishment_id = combined[:12]  # APHYD0047672
+            member_id = combined[12:]  # 0000003193
+            return EPFAccount(
+                uan="",
+                establishment_id=establishment_id,
+                establishment_name="",
+                member_id=member_id,
+                member_name=""
+            )
+
+        return None
 
     def _parse_transactions(self, text: str) -> List[EPFTransaction]:
         """
@@ -230,7 +290,8 @@ class EPFParser:
                     txn_date = datetime.strptime(date_str, "%d-%m-%y").date()
                 else:
                     txn_date = datetime.strptime(date_str, "%d-%m-%Y").date()
-            except:
+            except (ValueError, IndexError) as e:
+                logger.debug(f"Could not parse date '{date_str}': {e}")
                 continue
 
             # Create basic transaction
@@ -272,8 +333,8 @@ class EPFParser:
                     tds_deducted=tds,
                     taxable_interest=tds * Decimal("10")  # Approximate (TDS @ 10%)
                 )
-        except Exception:
-            pass
+        except (AttributeError, IndexError, InvalidOperation) as e:
+            logger.debug(f"Could not parse interest info: {e}")
 
         return None
 
@@ -284,9 +345,13 @@ class EPFParser:
 
         # Remove commas and convert
         clean_value = value.replace(",", "").strip()
+        # Handle negative values in parentheses: (1000) -> -1000
+        if clean_value.startswith('(') and clean_value.endswith(')'):
+            clean_value = '-' + clean_value[1:-1]
         try:
             return Decimal(clean_value)
-        except:
+        except (ValueError, InvalidOperation):
+            logger.debug(f"Could not convert '{value}' to Decimal")
             return Decimal("0")
 
     def calculate_80c_eligible(self, transactions: List[EPFTransaction]) -> Decimal:
@@ -433,5 +498,9 @@ class EPFParser:
                 )
             )
             return True
-        except Exception:
+        except sqlite3.IntegrityError:
+            logger.debug(f"Interest record already exists for FY {interest.financial_year}")
+            return False
+        except sqlite3.Error as e:
+            logger.warning(f"Failed to insert interest record: {e}")
             return False

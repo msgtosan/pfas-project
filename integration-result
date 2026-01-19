@@ -1,0 +1,366 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-9.0.2, pluggy-1.6.0 -- /home/sshankar/projects/pfas-project/venv/bin/python3
+cachedir: .pytest_cache
+rootdir: /home/sshankar/projects/pfas-project
+configfile: pytest.ini (WARNING: ignoring pytest config in pyproject.toml!)
+plugins: asyncio-1.3.0, cov-7.0.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 74 items
+
+tests/integration/test_audit_triggers.py::TestAutomaticAuditTriggers::test_journal_insert_trigger PASSED
+tests/integration/test_audit_triggers.py::TestAutomaticAuditTriggers::test_journal_update_trigger PASSED
+tests/integration/test_audit_triggers.py::TestAutomaticAuditTriggers::test_journal_entries_trigger PASSED
+tests/integration/test_audit_triggers.py::TestAutomaticAuditTriggers::test_exchange_rates_trigger PASSED
+tests/integration/test_audit_triggers.py::TestAutomaticAuditTriggers::test_accounts_trigger PASSED
+tests/integration/test_audit_triggers.py::TestAutomaticAuditTriggers::test_bank_accounts_trigger PASSED
+tests/integration/test_audit_triggers.py::TestAutomaticAuditTriggers::test_cascade_audit_on_reversal PASSED
+tests/integration/test_audit_triggers.py::TestAuditTriggerTransactionConsistency::test_audit_in_same_transaction PASSED
+tests/integration/test_audit_triggers.py::TestAuditTriggerTransactionConsistency::test_multiple_operations_in_transaction PASSED
+tests/integration/test_bank_intelligence/test_sanjay_integration.py::TestBankIntelligenceIntegration::test_01_config_loading[Sanjay] 
+[FIXTURE] Test Root: /home/sshankar/projects/pfas-project/Data
+
+[FIXTURE] PathResolver for user: Sanjay
+   Inbox: /mnt/c/Sanjay/PFMS/Data/Users/Sanjay/inbox
+SKIPPED
+tests/integration/test_bank_intelligence/test_sanjay_integration.py::TestBankIntelligenceIntegration::test_02_statement_files_exist[Sanjay] SKIPPED
+tests/integration/test_bank_intelligence/test_sanjay_integration.py::TestBankIntelligenceIntegration::test_03_category_classifier[Sanjay] SKIPPED
+tests/integration/test_bank_intelligence/test_sanjay_integration.py::TestBankIntelligenceIntegration::test_04_intelligent_ingestion[Sanjay] SKIPPED
+tests/integration/test_bank_intelligence/test_sanjay_integration.py::TestBankIntelligenceIntegration::test_05_data_validation[Sanjay] SKIPPED
+tests/integration/test_bank_intelligence/test_sanjay_integration.py::TestBankIntelligenceIntegration::test_06_statistics_generation[Sanjay] SKIPPED
+tests/integration/test_bank_intelligence/test_sanjay_integration.py::TestBankIntelligenceIntegration::test_07_fiscal_year_logic[Sanjay] SKIPPED
+tests/integration/test_bank_intelligence/test_sanjay_integration.py::TestBankIntelligenceIntegration::test_08_income_extraction[Sanjay] SKIPPED
+tests/integration/test_bank_intelligence/test_sanjay_integration.py::TestBankIntelligenceIntegration::test_09_excel_report_generation[Sanjay] SKIPPED
+tests/integration/test_bank_intelligence/test_sanjay_integration.py::TestBankIntelligenceIntegration::test_10_category_distribution[Sanjay] SKIPPED
+tests/integration/test_bank_intelligence/test_sanjay_integration.py::TestBankIntelligenceIntegration::test_11_deduplication[Sanjay] SKIPPED
+tests/integration/test_bank_intelligence/test_sanjay_integration.py::TestBankIntelligenceIntegration::test_12_pfas_asset_mapping[Sanjay] SKIPPED
+tests/integration/test_epf_integration.py::TestEPFParser::test_epf_parse_basic[Sanjay] 
+[FIXTURE] Creating in-memory test database...
+
+[FIXTURE] Selected EPF file: 2026-01-17_Sanjay_EPF_Interest_APHYD00476720000003193_2024.pdf
+
+======================================================================
+EPF Parser - Basic Parse Test
+File: 2026-01-17_Sanjay_EPF_Interest_APHYD00476720000003193_2024.pdf
+======================================================================
+FAILED
+tests/integration/test_epf_integration.py::TestEPFParser::test_epf_account_details[Sanjay] 
+[FIXTURE] Selected EPF file: 2026-01-17_Sanjay_EPF_Interest_APHYD00476720000003193_2024.pdf
+FAILED
+tests/integration/test_epf_integration.py::TestEPFParser::test_epf_transactions_structure[Sanjay] 
+[FIXTURE] Selected EPF file: 2026-01-17_Sanjay_EPF_Interest_APHYD00476720000003193_2024.pdf
+
+✓ Transaction Structure Valid
+  Sample: Mar-2024
+PASSED
+tests/integration/test_epf_integration.py::TestEPFParser::test_epf_save_to_db[Sanjay] 
+[FIXTURE] Selected EPF file: 2026-01-17_Sanjay_EPF_Interest_APHYD00476720000003193_2024.pdf
+FAILED
+tests/integration/test_epf_integration.py::TestEPFParser::test_epf_80c_calculation[Sanjay] 
+[FIXTURE] Selected EPF file: 2026-01-17_Sanjay_EPF_Interest_APHYD00476720000003193_2024.pdf
+
+✓ 80C Eligible: ₹0.00
+PASSED
+tests/integration/test_epf_integration.py::TestEPFMultiUser::test_epf_multi_user_parse[Sanjay] 
+[FIXTURE] Selected EPF file: 2026-01-17_Sanjay_EPF_Interest_APHYD00476720000003193_2024.pdf
+
+Testing for user: Sanjay
+FAILED
+tests/integration/test_epf_integration.py::TestEPFGoldenMaster::test_epf_totals_golden[Sanjay] 
+[FIXTURE] Selected EPF file: 2026-01-17_Sanjay_EPF_Interest_APHYD00476720000003193_2024.pdf
+
+[GOLDEN] ✓ Match verified: epf_totals_2026-01-17_Sanjay_EPF_Interest_APHYD00476720000003193_2024.golden.json
+PASSED
+tests/integration/test_mf_cams_integration.py::TestCAMSParser::test_cams_parse_basic[Sanjay] 
+[FIXTURE] Selected Mutual-Fund file: CAMS_Sanjay_CAMS_CG_FY2024-25_v3.xlsx
+
+✓ Parsed 158 transactions
+PASSED
+tests/integration/test_mf_cams_integration.py::TestCAMSParser::test_cams_capital_gains[Sanjay] 
+[FIXTURE] Selected Mutual-Fund file: CAMS_Sanjay_CAMS_CG_FY2024-25_v3.xlsx
+
+✓ Capital Gains:
+  STCG: ₹191,429.81
+  LTCG: ₹748,382.72
+PASSED
+tests/integration/test_mf_cams_integration.py::TestCAMSParser::test_cams_save_to_db[Sanjay] 
+[FIXTURE] Selected Mutual-Fund file: CAMS_Sanjay_CAMS_CG_FY2024-25_v3.xlsx
+
+✓ Saved 158 transactions
+PASSED
+tests/integration/test_nps_integration.py::TestNPSParser::test_nps_parse_basic[Sanjay] 
+[FIXTURE] Selected NPS file: 110091211424_NPS.csv
+FAILED
+tests/integration/test_nps_integration.py::TestNPSParser::test_nps_account_details[Sanjay] 
+[FIXTURE] Selected NPS file: 110091211424_NPS.csv
+PASSED
+tests/integration/test_nps_integration.py::TestNPSParser::test_nps_tiers[Sanjay] 
+[FIXTURE] Selected NPS file: 110091211424_NPS.csv
+
+✓ Tier I: 0, Tier II: 0
+PASSED
+tests/integration/test_nps_integration.py::TestNPSParser::test_nps_save_to_db[Sanjay] 
+[FIXTURE] Selected NPS file: 110091211424_NPS.csv
+FAILED
+tests/integration/test_nps_integration.py::TestNPSParser::test_nps_deductions[Sanjay] 
+[FIXTURE] Selected NPS file: 110091211424_NPS.csv
+
+✓ 80CCD(1): ₹0.00
+  80CCD(2): ₹0.00
+PASSED
+tests/integration/test_ppf_integration.py::TestPPFParser::test_ppf_parse_basic[Sanjay] 
+[FIXTURE] Selected PPF file: 2026-01-17_Sanjay_FY24-25-PPF-Sanjay.xlsx
+FAILED
+tests/integration/test_ppf_integration.py::TestPPFParser::test_ppf_account_details[Sanjay] 
+[FIXTURE] Selected PPF file: 2026-01-17_Sanjay_FY24-25-PPF-Sanjay.xlsx
+PASSED
+tests/integration/test_ppf_integration.py::TestPPFParser::test_ppf_transaction_types[Sanjay] 
+[FIXTURE] Selected PPF file: 2026-01-17_Sanjay_FY24-25-PPF-Sanjay.xlsx
+
+✓ Deposits: 0, Interest: 0
+PASSED
+tests/integration/test_ppf_integration.py::TestPPFParser::test_ppf_save_to_db[Sanjay] 
+[FIXTURE] Selected PPF file: 2026-01-17_Sanjay_FY24-25-PPF-Sanjay.xlsx
+FAILED
+tests/integration/test_ppf_integration.py::TestPPFParser::test_ppf_80c_calculation[Sanjay] 
+[FIXTURE] Selected PPF file: 2026-01-17_Sanjay_FY24-25-PPF-Sanjay.xlsx
+
+✓ 80C Eligible: ₹0.00
+PASSED
+tests/integration/test_sanjay_full_fy.py::TestSanjayFullFY2425::test_01_data_folder_exists[Sanjay] PASSED
+tests/integration/test_sanjay_full_fy.py::TestSanjayFullFY2425::test_02_parse_mf_cams[Sanjay] SKIPPED
+tests/integration/test_sanjay_full_fy.py::TestSanjayFullFY2425::test_03_parse_mf_karvy[Sanjay] SKIPPED
+tests/integration/test_sanjay_full_fy.py::TestSanjayFullFY2425::test_04_parse_zerodha_stocks[Sanjay] SKIPPED
+tests/integration/test_sanjay_full_fy.py::TestSanjayFullFY2425::test_05_parse_icici_stocks[Sanjay] SKIPPED
+tests/integration/test_sanjay_full_fy.py::TestSanjayFullFY2425::test_06_parse_nps[Sanjay] SKIPPED
+tests/integration/test_sanjay_full_fy.py::TestSanjayFullFY2425::test_07_parse_ppf[Sanjay] SKIPPED
+tests/integration/test_sanjay_full_fy.py::TestSanjayFullFY2425::test_08_parse_epf[Sanjay] SKIPPED
+tests/integration/test_sanjay_full_fy.py::TestMFCapitalGains::test_01_mf_capital_gains_calculation[Sanjay] SKIPPED
+tests/integration/test_sanjay_full_fy.py::TestStockCapitalGains::test_01_stock_capital_gains_zerodha[Sanjay] SKIPPED
+tests/integration/test_stock_integration.py::TestStockParser::test_stock_parse_basic[Sanjay] 
+[FIXTURE] Selected Indian-Stocks file: 2026-01-17_Sanjay_ICICIDirect_ICICID_Stock_holding_Sanjay_FY24-25.xlsx
+FAILED
+tests/integration/test_stock_integration.py::TestStockParser::test_stock_trade_types[Sanjay] 
+[FIXTURE] Selected Indian-Stocks file: 2026-01-17_Sanjay_ICICIDirect_ICICID_Stock_holding_Sanjay_FY24-25.xlsx
+
+✓ Buy: 0, Sell: 0
+PASSED
+tests/integration/test_stock_integration.py::TestStockParser::test_stock_save_to_db[Sanjay] 
+[FIXTURE] Selected Indian-Stocks file: 2026-01-17_Sanjay_ICICIDirect_ICICID_Stock_holding_Sanjay_FY24-25.xlsx
+ERROR
+tests/integration/test_stock_integration.py::TestStockParser::test_stock_capital_gains[Sanjay] 
+[FIXTURE] Selected Indian-Stocks file: 2026-01-17_Sanjay_ICICIDirect_ICICID_Stock_holding_Sanjay_FY24-25.xlsx
+
+✓ Total Capital Gain: ₹0.00
+PASSED
+tests/integration/test_full_fy.py::TestFullFY2425::test_01_load_bank_statements ERROR
+tests/integration/test_full_fy.py::TestFullFY2425::test_02_load_mf_statements ERROR
+tests/integration/test_full_fy.py::TestFullFY2425::test_03_load_salary_form16 ERROR
+tests/integration/test_full_fy.py::TestFullFY2425::test_04_verify_journal_balance ERROR
+tests/integration/test_full_fy.py::TestFullFY2425::test_05_tds_reconciliation ERROR
+tests/integration/test_full_fy.py::TestFullFY2425::test_06_generate_tax_computation ERROR
+tests/integration/test_full_fy.py::TestFullFY2425::test_07_itr2_json_export ERROR
+tests/integration/test_sanjay_full_fy.py::TestSanjayFullFY2425::test_09_generate_balance_sheet 
+=== Balance Sheet as of 2026-01-17 ===
+Total Assets: 0.00
+  - Mutual Funds (Equity): 0.00
+  - Mutual Funds (Debt): 0.00
+  - Stocks (Indian): 0.00
+  - EPF: 0.00
+  - PPF: 0.00
+  - NPS Tier I: 0.00
+  - NPS Tier II: 0.00
+Total Liabilities: 0.00
+Net Worth: 0.00
+PASSED
+tests/integration/test_sanjay_full_fy.py::TestSanjayFullFY2425::test_10_generate_cash_flow_statement 
+=== Cash Flow Statement FY 2024-25 ===
+Period: 2024-04-01 to 2025-03-31
+Operating Activities:
+  - Salary Received: 0.00
+  - Dividends Received: 0.00
+  - Interest Received: 0.00
+  - Taxes Paid: 0.00
+  Net Operating: 0.00
+Investing Activities:
+  - MF Purchases: 0.00
+  - MF Redemptions: 0.00
+  - Stock Buys: 0.00
+  - Stock Sells: 0.00
+  Net Investing: 0.00
+Net Change in Cash: 0.00
+PASSED
+tests/integration/test_sanjay_full_fy.py::TestSanjayFullFY2425::test_11_portfolio_valuation 
+=== Portfolio Summary ===
+Total Invested: 0.00
+Total Current Value: 0.00
+Unrealized Gain: 0.00
+Holdings: 0
+XIRR: No transactions found
+PASSED
+tests/integration/test_sanjay_full_fy.py::TestSanjayFullFY2425::test_12_verify_database_integrity 
+=== Database Integrity Check ===
+Tables created: 59
+  mf_transactions: 0 records
+  stock_trades: 0 records
+  epf_transactions: 0 records
+  nps_transactions: 0 records
+  ppf_transactions: 0 records
+All journal entries balanced.
+PASSED
+tests/integration/test_thread_safety.py::TestConcurrentReads::test_concurrent_currency_reads PASSED
+tests/integration/test_thread_safety.py::TestConcurrentReads::test_concurrent_journal_reads PASSED
+tests/integration/test_thread_safety.py::TestConcurrentWrites::test_concurrent_currency_writes Concurrent writes: 20/20 succeeded, 3 errors (expected behavior)
+PASSED
+tests/integration/test_thread_safety.py::TestConcurrentWrites::test_concurrent_journal_writes Concurrent journal writes: 10/10 succeeded, 1 errors (expected behavior)
+PASSED
+tests/integration/test_thread_safety.py::TestTransactionIsolation::test_transaction_rollback_isolation Transaction isolation test: 5/5 valid journals succeeded (expected behavior)
+PASSED
+tests/integration/test_thread_safety.py::TestTransactionIsolation::test_nested_transaction_handling PASSED
+tests/integration/test_thread_safety.py::TestWALMode::test_wal_mode_enabled PASSED
+tests/integration/test_thread_safety.py::TestWALMode::test_memory_db_no_wal PASSED
+
+==================================== ERRORS ====================================
+_______ ERROR at setup of TestStockParser.test_stock_save_to_db[Sanjay] ________
+venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:730: in pytest_fixture_setup
+    return (yield)
+            ^^^^^
+tests/integration/conftest.py:104: in clean_db
+    test_db.commit()
+E   sqlcipher3.dbapi2.ProgrammingError: Cannot operate on a closed database.
+________ ERROR at setup of TestFullFY2425.test_01_load_bank_statements _________
+venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:730: in pytest_fixture_setup
+    return (yield)
+            ^^^^^
+tests/integration/conftest.py:104: in clean_db
+    test_db.commit()
+E   sqlcipher3.dbapi2.ProgrammingError: Cannot operate on a closed database.
+_________ ERROR at setup of TestFullFY2425.test_02_load_mf_statements __________
+venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:730: in pytest_fixture_setup
+    return (yield)
+            ^^^^^
+tests/integration/conftest.py:104: in clean_db
+    test_db.commit()
+E   sqlcipher3.dbapi2.ProgrammingError: Cannot operate on a closed database.
+_________ ERROR at setup of TestFullFY2425.test_03_load_salary_form16 __________
+venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:730: in pytest_fixture_setup
+    return (yield)
+            ^^^^^
+tests/integration/conftest.py:104: in clean_db
+    test_db.commit()
+E   sqlcipher3.dbapi2.ProgrammingError: Cannot operate on a closed database.
+_______ ERROR at setup of TestFullFY2425.test_04_verify_journal_balance ________
+venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:730: in pytest_fixture_setup
+    return (yield)
+            ^^^^^
+tests/integration/conftest.py:104: in clean_db
+    test_db.commit()
+E   sqlcipher3.dbapi2.ProgrammingError: Cannot operate on a closed database.
+_________ ERROR at setup of TestFullFY2425.test_05_tds_reconciliation __________
+venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:730: in pytest_fixture_setup
+    return (yield)
+            ^^^^^
+tests/integration/conftest.py:104: in clean_db
+    test_db.commit()
+E   sqlcipher3.dbapi2.ProgrammingError: Cannot operate on a closed database.
+______ ERROR at setup of TestFullFY2425.test_06_generate_tax_computation _______
+venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:730: in pytest_fixture_setup
+    return (yield)
+            ^^^^^
+tests/integration/conftest.py:104: in clean_db
+    test_db.commit()
+E   sqlcipher3.dbapi2.ProgrammingError: Cannot operate on a closed database.
+__________ ERROR at setup of TestFullFY2425.test_07_itr2_json_export ___________
+venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:730: in pytest_fixture_setup
+    return (yield)
+            ^^^^^
+tests/integration/conftest.py:104: in clean_db
+    test_db.commit()
+E   sqlcipher3.dbapi2.ProgrammingError: Cannot operate on a closed database.
+=================================== FAILURES ===================================
+__________________ TestEPFParser.test_epf_parse_basic[Sanjay] __________________
+tests/integration/test_epf_integration.py:31: in test_epf_parse_basic
+    assert result.success, f"Parse failed: {result.errors}"
+E   AssertionError: Parse failed: ['Failed to extract account information']
+E   assert False
+E    +  where False = ParseResult(success=False, account=None, transactions=[EPFTransaction(wage_month='Mar-2024', transaction_date=datetime.date(2024, 4, 9), transaction_type='CR', wages=Decimal('0'), eps_wages=Decimal('0'), employee_contribution=Decimal('0'), employer_contribution=Decimal('0'), pension_contribution=Decimal('0'), vpf_contribution=Decimal('0'), employee_balance=Decimal('0'), employer_balance=Decimal('0'), pension_balance=Decimal('0')), EPFTransaction(wage_month='Apr-2024', transaction_date=datetime.date(2024, 5, 10), transaction_type='CR', wages=Decimal('0'), eps_wages=Decimal('0'), employee_contribution=Decimal('0'), employer_contribution=Decimal('0'), pension_contribution=Decimal('0'), vpf_contribution=Decimal('0'), employee_balance=Decimal('0'), employer_balance=Decimal('0'), pension_balance=Decimal('0')), EPFTransaction(wage_month='May-2024', transaction_date=datetime.date(2024, 6, 10), transaction_type='CR', wages=Decimal('0'), eps_wages=Decimal('0'), employee_contribution=Decimal('0'), employer_contribution=Decimal('0'), pension_contribution=Decimal('0'), vpf_contribution=Decimal('0'), employee_balance=Decimal('0'), employer_balance=Decimal('0'), pension_balance=Decimal('0')), E...'), employee_contribution=Decimal('0'), employer_contribution=Decimal('0'), pension_contribution=Decimal('0'), vpf_contribution=Decimal('0'), employee_balance=Decimal('0'), employer_balance=Decimal('0'), pension_balance=Decimal('0')), EPFTransaction(wage_month='Jan-2025', transaction_date=datetime.date(2025, 2, 11), transaction_type='CR', wages=Decimal('0'), eps_wages=Decimal('0'), employee_contribution=Decimal('0'), employer_contribution=Decimal('0'), pension_contribution=Decimal('0'), vpf_contribution=Decimal('0'), employee_balance=Decimal('0'), employer_balance=Decimal('0'), pension_balance=Decimal('0')), EPFTransaction(wage_month='Feb-2025', transaction_date=datetime.date(2025, 3, 7), transaction_type='CR', wages=Decimal('0'), eps_wages=Decimal('0'), employee_contribution=Decimal('0'), employer_contribution=Decimal('0'), pension_contribution=Decimal('0'), vpf_contribution=Decimal('0'), employee_balance=Decimal('0'), employer_balance=Decimal('0'), pension_balance=Decimal('0'))], interest=None, errors=['Failed to extract account information'], warnings=[], source_file='/mnt/c/Sanjay/PFMS/Data/Users/Sanjay/inbox/EPF/2026-01-17_Sanjay_EPF_Interest_APHYD00476720000003193_2024.pdf').success
+________________ TestEPFParser.test_epf_account_details[Sanjay] ________________
+tests/integration/test_epf_integration.py:44: in test_epf_account_details
+    assert result.success
+E   AssertionError: assert False
+E    +  where False = ParseResult(success=False, account=None, transactions=[EPFTransaction(wage_month='Mar-2024', transaction_date=datetime.date(2024, 4, 9), transaction_type='CR', wages=Decimal('0'), eps_wages=Decimal('0'), employee_contribution=Decimal('0'), employer_contribution=Decimal('0'), pension_contribution=Decimal('0'), vpf_contribution=Decimal('0'), employee_balance=Decimal('0'), employer_balance=Decimal('0'), pension_balance=Decimal('0')), EPFTransaction(wage_month='Apr-2024', transaction_date=datetime.date(2024, 5, 10), transaction_type='CR', wages=Decimal('0'), eps_wages=Decimal('0'), employee_contribution=Decimal('0'), employer_contribution=Decimal('0'), pension_contribution=Decimal('0'), vpf_contribution=Decimal('0'), employee_balance=Decimal('0'), employer_balance=Decimal('0'), pension_balance=Decimal('0')), EPFTransaction(wage_month='May-2024', transaction_date=datetime.date(2024, 6, 10), transaction_type='CR', wages=Decimal('0'), eps_wages=Decimal('0'), employee_contribution=Decimal('0'), employer_contribution=Decimal('0'), pension_contribution=Decimal('0'), vpf_contribution=Decimal('0'), employee_balance=Decimal('0'), employer_balance=Decimal('0'), pension_balance=Decimal('0')), E...'), employee_contribution=Decimal('0'), employer_contribution=Decimal('0'), pension_contribution=Decimal('0'), vpf_contribution=Decimal('0'), employee_balance=Decimal('0'), employer_balance=Decimal('0'), pension_balance=Decimal('0')), EPFTransaction(wage_month='Jan-2025', transaction_date=datetime.date(2025, 2, 11), transaction_type='CR', wages=Decimal('0'), eps_wages=Decimal('0'), employee_contribution=Decimal('0'), employer_contribution=Decimal('0'), pension_contribution=Decimal('0'), vpf_contribution=Decimal('0'), employee_balance=Decimal('0'), employer_balance=Decimal('0'), pension_balance=Decimal('0')), EPFTransaction(wage_month='Feb-2025', transaction_date=datetime.date(2025, 3, 7), transaction_type='CR', wages=Decimal('0'), eps_wages=Decimal('0'), employee_contribution=Decimal('0'), employer_contribution=Decimal('0'), pension_contribution=Decimal('0'), vpf_contribution=Decimal('0'), employee_balance=Decimal('0'), employer_balance=Decimal('0'), pension_balance=Decimal('0'))], interest=None, errors=['Failed to extract account information'], warnings=[], source_file='/mnt/c/Sanjay/PFMS/Data/Users/Sanjay/inbox/EPF/2026-01-17_Sanjay_EPF_Interest_APHYD00476720000003193_2024.pdf').success
+__________________ TestEPFParser.test_epf_save_to_db[Sanjay] ___________________
+tests/integration/test_epf_integration.py:79: in test_epf_save_to_db
+    assert count > 0, "No records saved"
+E   AssertionError: No records saved
+E   assert 0 > 0
+______________ TestEPFMultiUser.test_epf_multi_user_parse[Sanjay] ______________
+tests/integration/test_epf_integration.py:112: in test_epf_multi_user_parse
+    assert result.success
+E   AssertionError: assert False
+E    +  where False = ParseResult(success=False, account=None, transactions=[EPFTransaction(wage_month='Mar-2024', transaction_date=datetime.date(2024, 4, 9), transaction_type='CR', wages=Decimal('0'), eps_wages=Decimal('0'), employee_contribution=Decimal('0'), employer_contribution=Decimal('0'), pension_contribution=Decimal('0'), vpf_contribution=Decimal('0'), employee_balance=Decimal('0'), employer_balance=Decimal('0'), pension_balance=Decimal('0')), EPFTransaction(wage_month='Apr-2024', transaction_date=datetime.date(2024, 5, 10), transaction_type='CR', wages=Decimal('0'), eps_wages=Decimal('0'), employee_contribution=Decimal('0'), employer_contribution=Decimal('0'), pension_contribution=Decimal('0'), vpf_contribution=Decimal('0'), employee_balance=Decimal('0'), employer_balance=Decimal('0'), pension_balance=Decimal('0')), EPFTransaction(wage_month='May-2024', transaction_date=datetime.date(2024, 6, 10), transaction_type='CR', wages=Decimal('0'), eps_wages=Decimal('0'), employee_contribution=Decimal('0'), employer_contribution=Decimal('0'), pension_contribution=Decimal('0'), vpf_contribution=Decimal('0'), employee_balance=Decimal('0'), employer_balance=Decimal('0'), pension_balance=Decimal('0')), E...'), employee_contribution=Decimal('0'), employer_contribution=Decimal('0'), pension_contribution=Decimal('0'), vpf_contribution=Decimal('0'), employee_balance=Decimal('0'), employer_balance=Decimal('0'), pension_balance=Decimal('0')), EPFTransaction(wage_month='Jan-2025', transaction_date=datetime.date(2025, 2, 11), transaction_type='CR', wages=Decimal('0'), eps_wages=Decimal('0'), employee_contribution=Decimal('0'), employer_contribution=Decimal('0'), pension_contribution=Decimal('0'), vpf_contribution=Decimal('0'), employee_balance=Decimal('0'), employer_balance=Decimal('0'), pension_balance=Decimal('0')), EPFTransaction(wage_month='Feb-2025', transaction_date=datetime.date(2025, 3, 7), transaction_type='CR', wages=Decimal('0'), eps_wages=Decimal('0'), employee_contribution=Decimal('0'), employer_contribution=Decimal('0'), pension_contribution=Decimal('0'), vpf_contribution=Decimal('0'), employee_balance=Decimal('0'), employer_balance=Decimal('0'), pension_balance=Decimal('0'))], interest=None, errors=['Failed to extract account information'], warnings=[], source_file='/mnt/c/Sanjay/PFMS/Data/Users/Sanjay/inbox/EPF/2026-01-17_Sanjay_EPF_Interest_APHYD00476720000003193_2024.pdf').success
+__________________ TestNPSParser.test_nps_parse_basic[Sanjay] __________________
+tests/integration/test_nps_integration.py:17: in test_nps_parse_basic
+    assert len(result.transactions) > 0
+E   AssertionError: assert 0 > 0
+E    +  where 0 = len([])
+E    +    where [] = ParseResult(success=True, account=None, transactions=[], errors=[], warnings=['No transactions found'], source_file='/mnt/c/Sanjay/PFMS/Data/Users/Sanjay/inbox/NPS/110091211424_NPS.csv').transactions
+__________________ TestNPSParser.test_nps_save_to_db[Sanjay] ___________________
+tests/integration/test_nps_integration.py:46: in test_nps_save_to_db
+    assert count > 0
+E   assert 0 > 0
+__________________ TestPPFParser.test_ppf_parse_basic[Sanjay] __________________
+tests/integration/test_ppf_integration.py:21: in test_ppf_parse_basic
+    assert result.success, f"Parse failed: {result.errors}"
+E   AssertionError: Parse failed: ['Failed to parse file: Worksheet index 0 is invalid, 0 worksheets found']
+E   assert False
+E    +  where False = ParseResult(success=False, account=None, transactions=[], errors=['Failed to parse file: Worksheet index 0 is invalid, 0 worksheets found'], warnings=[], source_file='/mnt/c/Sanjay/PFMS/Data/Users/Sanjay/inbox/PPF/2026-01-17_Sanjay_FY24-25-PPF-Sanjay.xlsx').success
+__________________ TestPPFParser.test_ppf_save_to_db[Sanjay] ___________________
+tests/integration/test_ppf_integration.py:51: in test_ppf_save_to_db
+    assert count > 0
+E   assert 0 > 0
+________________ TestStockParser.test_stock_parse_basic[Sanjay] ________________
+tests/integration/test_stock_integration.py:17: in test_stock_parse_basic
+    assert len(result.trades) > 0
+E   AssertionError: assert 0 > 0
+E    +  where 0 = len([])
+E    +    where [] = ParseResult(success=True, trades=[], dividends=[], stt_entries=[], source_file='/mnt/c/Sanjay/PFMS/Data/Users/Sanjay/inbox/Indian-Stocks/ICICIDirect/2026-01-17_Sanjay_ICICIDirect_ICICID_Stock_holding_Sanjay_FY24-25.xlsx', errors=[], warnings=['No tradewise sheet found', 'No trades or dividends found in file']).trades
+=========================== short test summary info ============================
+SKIPPED [1] tests/integration/test_bank_intelligence/test_sanjay_integration.py:77: Config file not found: /mnt/c/Sanjay/PFMS/Data/Users/Sanjay/Bank/ICICI/user_bank_config.json
+SKIPPED [1] tests/integration/test_bank_intelligence/test_sanjay_integration.py:95: Bank directory not found: /mnt/c/Sanjay/PFMS/Data/Users/Sanjay/Bank/ICICI
+SKIPPED [1] tests/integration/test_bank_intelligence/test_sanjay_integration.py:111: Config file not found: /mnt/c/Sanjay/PFMS/Data/Users/Sanjay/Bank/ICICI/user_bank_config.json
+SKIPPED [1] tests/integration/test_bank_intelligence/test_sanjay_integration.py:142: Bank directory not found
+SKIPPED [1] tests/integration/test_bank_intelligence/test_sanjay_integration.py:162: Database not created - run test_04 first
+SKIPPED [1] tests/integration/test_bank_intelligence/test_sanjay_integration.py:174: Database not created - run test_04 first
+SKIPPED [1] tests/integration/test_bank_intelligence/test_sanjay_integration.py:193: Database not created - run test_04 first
+SKIPPED [1] tests/integration/test_bank_intelligence/test_sanjay_integration.py:211: Database not created - run test_04 first
+SKIPPED [1] tests/integration/test_bank_intelligence/test_sanjay_integration.py:233: Database not created - run test_04 first
+SKIPPED [1] tests/integration/test_bank_intelligence/test_sanjay_integration.py:247: Database not created - run test_04 first
+SKIPPED [1] tests/integration/test_bank_intelligence/test_sanjay_integration.py:268: Database not created - run test_04 first
+SKIPPED [1] tests/integration/test_bank_intelligence/test_sanjay_integration.py:296: Database not created - run test_04 first
+SKIPPED [1] tests/integration/test_sanjay_full_fy.py:59: CAMS folder not found
+SKIPPED [1] tests/integration/test_sanjay_full_fy.py:90: Karvy folder not found
+SKIPPED [1] tests/integration/test_sanjay_full_fy.py:117: Zerodha folder not found
+SKIPPED [1] tests/integration/test_sanjay_full_fy.py:142: ICICI Direct folder not found
+SKIPPED [1] tests/integration/test_sanjay_full_fy.py:166: NPS folder not found
+SKIPPED [1] tests/integration/test_sanjay_full_fy.py:190: PPF folder not found
+SKIPPED [1] tests/integration/test_sanjay_full_fy.py:212: EPF folder not found
+SKIPPED [1] tests/integration/test_sanjay_full_fy.py:355: CAMS folder not found
+SKIPPED [1] tests/integration/test_sanjay_full_fy.py:407: Zerodha folder not found
+ERROR tests/integration/test_stock_integration.py::TestStockParser::test_stock_save_to_db[Sanjay]
+ERROR tests/integration/test_full_fy.py::TestFullFY2425::test_01_load_bank_statements
+ERROR tests/integration/test_full_fy.py::TestFullFY2425::test_02_load_mf_statements
+ERROR tests/integration/test_full_fy.py::TestFullFY2425::test_03_load_salary_form16
+ERROR tests/integration/test_full_fy.py::TestFullFY2425::test_04_verify_journal_balance
+ERROR tests/integration/test_full_fy.py::TestFullFY2425::test_05_tds_reconciliation
+ERROR tests/integration/test_full_fy.py::TestFullFY2425::test_06_generate_tax_computation
+ERROR tests/integration/test_full_fy.py::TestFullFY2425::test_07_itr2_json_export
+FAILED tests/integration/test_epf_integration.py::TestEPFParser::test_epf_parse_basic[Sanjay]
+FAILED tests/integration/test_epf_integration.py::TestEPFParser::test_epf_account_details[Sanjay]
+FAILED tests/integration/test_epf_integration.py::TestEPFParser::test_epf_save_to_db[Sanjay]
+FAILED tests/integration/test_epf_integration.py::TestEPFMultiUser::test_epf_multi_user_parse[Sanjay]
+FAILED tests/integration/test_nps_integration.py::TestNPSParser::test_nps_parse_basic[Sanjay]
+FAILED tests/integration/test_nps_integration.py::TestNPSParser::test_nps_save_to_db[Sanjay]
+FAILED tests/integration/test_ppf_integration.py::TestPPFParser::test_ppf_parse_basic[Sanjay]
+FAILED tests/integration/test_ppf_integration.py::TestPPFParser::test_ppf_save_to_db[Sanjay]
+FAILED tests/integration/test_stock_integration.py::TestStockParser::test_stock_parse_basic[Sanjay]
+============= 9 failed, 36 passed, 21 skipped, 8 errors in 14.94s ==============

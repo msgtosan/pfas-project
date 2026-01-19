@@ -3,9 +3,9 @@
 Bank Intelligence CLI - Data-Driven Bank Statement Processing.
 
 Usage:
-    python -m src.pfas.services.bank_intelligence.run ingest [options]
-    python -m src.pfas.services.bank_intelligence.run report [options]
-    python -m src.pfas.services.bank_intelligence.run audit [options]
+    python -m src.pfas.services.bank_intelligence.run ingest --user Sanjay [options]
+    python -m src.pfas.services.bank_intelligence.run report --user Sanjay [options]
+    python -m src.pfas.services.bank_intelligence.run audit --user Sanjay [options]
 
 No code changes required for:
 - Adding new statement files
@@ -15,29 +15,102 @@ No code changes required for:
 
 import argparse
 import sys
+import os
 from pathlib import Path
+from typing import Optional
 
-# Default paths
-DEFAULT_DATA_ROOT = "Data/Users"
-DEFAULT_DB_PATH = "Data/Reports/Bank_Intelligence/money_movement.db"
-DEFAULT_REPORT_PATH = "Data/Reports/Bank_Intelligence/Master_Report.xlsx"
+# Add src to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent.parent))
+
+from pfas.core.paths import PathResolver
+
+
+def _get_data_root() -> Path:
+    """Get data root from environment or relative to working directory."""
+    if 'PFAS_DATA_ROOT' in os.environ:
+        return Path(os.environ['PFAS_DATA_ROOT'])
+    # Try project-relative path
+    for candidate in ['Data', '../Data', '../../Data']:
+        if Path(candidate).exists():
+            return Path(candidate)
+    return Path('Data')
+
+
+def _get_resolver(user_name: Optional[str]) -> Optional[PathResolver]:
+    """Get PathResolver for a user, or None if no user specified."""
+    if not user_name:
+        return None
+    data_root = _get_data_root()
+    return PathResolver(data_root, user_name)
+
+
+def _get_db_path(args) -> str:
+    """Get database path from args or user's folder."""
+    if hasattr(args, 'db_path') and args.db_path:
+        return args.db_path
+
+    resolver = _get_resolver(getattr(args, 'user', None))
+    if resolver:
+        # User-specific database
+        db_dir = resolver.user_dir / "db"
+        db_dir.mkdir(parents=True, exist_ok=True)
+        return str(db_dir / "bank_intelligence.db")
+    else:
+        # Global fallback (for cross-user analysis)
+        data_root = _get_data_root()
+        db_path = data_root / "Reports" / "Bank_Intelligence" / "money_movement.db"
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        return str(db_path)
+
+
+def _get_report_path(args, report_type: str = "bank_intelligence") -> str:
+    """Get report output path from args or user's folder."""
+    if hasattr(args, 'output') and args.output:
+        return args.output
+
+    resolver = _get_resolver(getattr(args, 'user', None))
+    if resolver:
+        # User-specific reports folder
+        prefs = resolver.get_preferences()
+        fmt = getattr(args, 'format', None) or prefs.reports.default_format
+        return str(resolver.get_report_path(report_type, prefs.default_fy, fmt))
+    else:
+        # Global fallback
+        data_root = _get_data_root()
+        report_path = data_root / "Reports" / "Bank_Intelligence" / "Master_Report.xlsx"
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        return str(report_path)
 
 
 def cmd_ingest(args):
-    """Ingest bank statements from Data/Users directory."""
+    """Ingest bank statements from user's directory."""
     from .intelligent_analyzer import BankIntelligenceAnalyzer
+
+    # Get paths using PathResolver
+    resolver = _get_resolver(args.user)
+    db_path = _get_db_path(args)
+
+    # Determine data root for scanning
+    if resolver:
+        # User-specific: scan only that user's data
+        data_root = str(resolver.user_dir.parent)  # Data/Users
+    else:
+        # Global: scan all users
+        data_root = str(_get_data_root() / "Users")
 
     print("=" * 60)
     print("Bank Intelligence - Statement Ingestion")
     print("=" * 60)
-    print(f"Data Root: {args.data_root}")
-    print(f"Database: {args.db_path}")
+    if args.user:
+        print(f"User: {args.user}")
+    print(f"Data Root: {data_root}")
+    print(f"Database: {db_path}")
     print()
 
     # Ensure output directory exists
-    Path(args.db_path).parent.mkdir(parents=True, exist_ok=True)
+    Path(db_path).parent.mkdir(parents=True, exist_ok=True)
 
-    with BankIntelligenceAnalyzer(args.db_path, args.data_root) as analyzer:
+    with BankIntelligenceAnalyzer(db_path, data_root) as analyzer:
         result = analyzer.scan_and_ingest_all()
 
     print("\n" + "=" * 60)
@@ -71,23 +144,27 @@ def cmd_report(args):
     """Generate Excel Master Report."""
     from .report_generation import FiscalReportGenerator
 
+    # Get paths using PathResolver
+    db_path = _get_db_path(args)
+    output_path = _get_report_path(args)
+
     print("=" * 60)
     print("Bank Intelligence - Report Generation")
     print("=" * 60)
-    print(f"Database: {args.db_path}")
-    print(f"Output: {args.output}")
+    if args.user:
+        print(f"User: {args.user}")
+    print(f"Database: {db_path}")
+    print(f"Output: {output_path}")
 
     if args.fiscal_year:
         print(f"Fiscal Year Filter: {args.fiscal_year}")
-    if args.user:
-        print(f"User Filter: {args.user}")
     print()
 
     # Ensure output directory exists
-    Path(args.output).parent.mkdir(parents=True, exist_ok=True)
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
 
     try:
-        with FiscalReportGenerator(args.db_path) as generator:
+        with FiscalReportGenerator(db_path) as generator:
             # Show available data
             fiscal_years = generator.get_fiscal_years()
             users = generator.get_users()
@@ -98,7 +175,7 @@ def cmd_report(args):
 
             # Generate report
             output = generator.generate_master_report(
-                args.output,
+                output_path,
                 fiscal_year=args.fiscal_year,
                 user_name=args.user
             )
@@ -130,14 +207,19 @@ def cmd_audit(args):
     """Audit database integrity and show statistics."""
     from .db_audit import DatabaseAuditor
 
+    # Get database path using PathResolver
+    db_path = _get_db_path(args)
+
     print("=" * 60)
     print("Bank Intelligence - Database Audit")
     print("=" * 60)
-    print(f"Database: {args.db_path}")
+    if args.user:
+        print(f"User: {args.user}")
+    print(f"Database: {db_path}")
     print()
 
     try:
-        with DatabaseAuditor(args.db_path) as auditor:
+        with DatabaseAuditor(db_path) as auditor:
             if args.all or not any([args.stats, args.validate, args.ingestion_log, args.income]):
                 # Show everything
                 auditor.audit_recent_records(args.recent)
@@ -172,21 +254,21 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Ingest all bank statements
-  python -m src.pfas.services.bank_intelligence.run ingest
+  # Ingest bank statements for a user
+  python -m src.pfas.services.bank_intelligence.run ingest --user Sanjay
 
-  # Generate Excel report
-  python -m src.pfas.services.bank_intelligence.run report
+  # Generate Excel report for a user
+  python -m src.pfas.services.bank_intelligence.run report --user Sanjay
 
-  # Audit database
-  python -m src.pfas.services.bank_intelligence.run audit --stats
+  # Audit user's database
+  python -m src.pfas.services.bank_intelligence.run audit --user Sanjay --stats
 
   # Filter report by fiscal year
-  python -m src.pfas.services.bank_intelligence.run report --fiscal-year "FY 2024-25"
+  python -m src.pfas.services.bank_intelligence.run report --user Sanjay --fy "FY 2024-25"
 
 No code changes needed for:
-  - Adding new statement files (just drop into folder)
-  - Adding new users/banks (create folder + config.json)
+  - Adding new statement files (just drop into user's Bank/ folder)
+  - Adding new users (create folder under Data/Users/)
   - Modifying categories (edit user_bank_config.json)
         """
     )
@@ -199,12 +281,12 @@ No code changes needed for:
         help="Ingest bank statements into database"
     )
     ingest_parser.add_argument(
-        "--data-root", default=DEFAULT_DATA_ROOT,
-        help=f"Root directory for user data (default: {DEFAULT_DATA_ROOT})"
+        "--user", "-u",
+        help="User name (uses user-specific db and data paths)"
     )
     ingest_parser.add_argument(
-        "--db-path", default=DEFAULT_DB_PATH,
-        help=f"Path to SQLite database (default: {DEFAULT_DB_PATH})"
+        "--db-path",
+        help="Override database path (default: user's db/bank_intelligence.db)"
     )
 
     # Report command
@@ -213,20 +295,25 @@ No code changes needed for:
         help="Generate Excel Master Report"
     )
     report_parser.add_argument(
-        "--db-path", default=DEFAULT_DB_PATH,
-        help=f"Path to SQLite database (default: {DEFAULT_DB_PATH})"
+        "--user", "-u",
+        help="User name (uses user-specific db and output paths)"
     )
     report_parser.add_argument(
-        "--output", "-o", default=DEFAULT_REPORT_PATH,
-        help=f"Output Excel file path (default: {DEFAULT_REPORT_PATH})"
+        "--db-path",
+        help="Override database path"
+    )
+    report_parser.add_argument(
+        "--output", "-o",
+        help="Override output file path (default: user's reports/bank_intelligence/)"
+    )
+    report_parser.add_argument(
+        "--format", "-f",
+        choices=["xlsx", "pdf", "json", "csv"],
+        help="Output format (default: from user preferences)"
     )
     report_parser.add_argument(
         "--fiscal-year", "--fy",
         help="Filter by fiscal year (e.g., 'FY 2024-25')"
-    )
-    report_parser.add_argument(
-        "--user", "-u",
-        help="Filter by user name"
     )
 
     # Audit command
@@ -235,8 +322,12 @@ No code changes needed for:
         help="Audit database integrity and statistics"
     )
     audit_parser.add_argument(
-        "--db-path", default=DEFAULT_DB_PATH,
-        help=f"Path to SQLite database (default: {DEFAULT_DB_PATH})"
+        "--user", "-u",
+        help="User name (uses user-specific database)"
+    )
+    audit_parser.add_argument(
+        "--db-path",
+        help="Override database path"
     )
     audit_parser.add_argument(
         "--recent", type=int, default=10,

@@ -1,7 +1,7 @@
 """
-Full FY24-25 Integration Test for User Sanjay
+Full FY24-25 Integration Test - Refactored
 
-This test loads all actual data files from Data/Users/Sanjay and verifies:
+This test loads all actual data files and verifies:
 1. All parsers work correctly with real data
 2. Financial statement services can generate reports
 3. Data integrity is maintained across all asset classes
@@ -16,9 +16,7 @@ from pfas.core.accounts import setup_chart_of_accounts
 
 
 class TestSanjayFullFY2425:
-    """Full financial year integration test for user Sanjay."""
-
-    DATA_PATH = Path("Data/Users/Sanjay")
+    """Full financial year integration test."""
 
     @pytest.fixture(scope="class")
     def db_connection(self):
@@ -28,10 +26,10 @@ class TestSanjayFullFY2425:
         conn = db.init(":memory:", "test_password")
         setup_chart_of_accounts(conn)
 
-        # Create test user Sanjay
+        # Create test user
         conn.execute("""
             INSERT INTO users (id, pan_encrypted, pan_salt, name, email)
-            VALUES (1, X'00', X'00', 'Sanjay', 'sanjay@example.com')
+            VALUES (1, X'00', X'00', 'Test User', 'test@example.com')
         """)
         conn.commit()
 
@@ -40,24 +38,35 @@ class TestSanjayFullFY2425:
         db.close()
         DatabaseManager.reset_instance()
 
-    def test_01_data_folder_exists(self):
-        """Verify data folder exists."""
-        assert self.DATA_PATH.exists(), f"Data folder {self.DATA_PATH} not found"
+    @pytest.fixture(scope="class")
+    def data_path(self, path_resolver):
+        """Get user data directory."""
+        user_dir = path_resolver.user_dir
+        if not user_dir.exists():
+            pytest.skip(f"User directory not found: {user_dir}")
+        return user_dir
 
-    def test_02_parse_mf_cams(self, db_connection):
+    def test_01_data_folder_exists(self, data_path):
+        """Verify data folder exists."""
+        assert data_path.exists(), f"Data folder {data_path} not found"
+
+    def test_02_parse_mf_cams(self, db_connection, data_path):
         """Parse CAMS mutual fund statement."""
         from pfas.parsers.mf import CAMSParser
 
-        cams_files = list((self.DATA_PATH / "Mutual-Fund/CAMS").glob("*.xlsx"))
-        assert len(cams_files) > 0, "No CAMS Excel files found"
+        cams_path = data_path / "Mutual-Fund/CAMS"
+        if not cams_path.exists():
+            pytest.skip("CAMS folder not found")
+
+        cams_files = list(cams_path.glob("*.xlsx"))
+        if not cams_files:
+            pytest.skip("No CAMS Excel files found")
 
         parser = CAMSParser(db_connection)
         total_transactions = 0
         files_processed = 0
 
         for cams_file in cams_files:
-            # CG files have TRXN_DETAILS with transaction data
-            # Consolidated files are just holdings summaries
             if "CG" in cams_file.name:
                 result = parser.parse(cams_file)
                 if result.success:
@@ -66,20 +75,21 @@ class TestSanjayFullFY2425:
                     files_processed += 1
                     print(f"CAMS {cams_file.name}: {num_txns} transactions")
                 else:
-                    # Log errors but don't fail - file format may vary
                     print(f"CAMS {cams_file.name}: Could not parse - {result.errors}")
 
         print(f"Total CAMS transactions: {total_transactions} from {files_processed} files")
-        # Skip assertion - CAMS Excel format varies and may not always parse
         if total_transactions == 0:
             pytest.skip("CAMS files did not parse - format may not be supported")
 
-    def test_03_parse_mf_karvy(self, db_connection):
+    def test_03_parse_mf_karvy(self, db_connection, data_path):
         """Parse Karvy/KFintech mutual fund statement."""
         from pfas.parsers.mf import KarvyParser
 
-        karvy_files = list((self.DATA_PATH / "Mutual-Fund/KARVY").glob("*.xlsx"))
+        karvy_path = data_path / "Mutual-Fund/KARVY"
+        if not karvy_path.exists():
+            pytest.skip("Karvy folder not found")
 
+        karvy_files = list(karvy_path.glob("*.xlsx"))
         if not karvy_files:
             pytest.skip("No Karvy Excel files found")
 
@@ -98,16 +108,15 @@ class TestSanjayFullFY2425:
 
         print(f"Total Karvy transactions: {total_transactions}")
 
-    def test_04_parse_zerodha_stocks(self, db_connection):
+    def test_04_parse_zerodha_stocks(self, db_connection, data_path):
         """Parse Zerodha stock trades."""
         from pfas.parsers.stock import ZerodhaParser
 
-        zerodha_path = self.DATA_PATH / "Indian-Stocks/Zerodha"
+        zerodha_path = data_path / "Indian-Stocks/Zerodha"
         if not zerodha_path.exists():
             pytest.skip("Zerodha folder not found")
 
         pnl_files = list(zerodha_path.glob("taxpnl*.xlsx"))
-
         if not pnl_files:
             pytest.skip("No Zerodha Tax P&L files found")
 
@@ -124,16 +133,15 @@ class TestSanjayFullFY2425:
         assert total_trades > 0, "No trades parsed from Zerodha"
         print(f"Total Zerodha trades: {total_trades}")
 
-    def test_05_parse_icici_stocks(self, db_connection):
+    def test_05_parse_icici_stocks(self, db_connection, data_path):
         """Parse ICICI Direct stock trades."""
         from pfas.parsers.stock import ICICIDirectParser
 
-        icici_path = self.DATA_PATH / "Indian-Stocks/ICICIDirect"
+        icici_path = data_path / "Indian-Stocks/ICICIDirect"
         if not icici_path.exists():
             pytest.skip("ICICI Direct folder not found")
 
         csv_files = list(icici_path.glob("*.csv"))
-
         if not csv_files:
             pytest.skip("No ICICI Direct CSV files found")
 
@@ -149,16 +157,15 @@ class TestSanjayFullFY2425:
 
         print(f"Total ICICI Direct trades: {total_trades}")
 
-    def test_06_parse_nps(self, db_connection):
+    def test_06_parse_nps(self, db_connection, data_path):
         """Parse NPS statement."""
         from pfas.parsers.nps import NPSParser
 
-        nps_path = self.DATA_PATH / "NPS"
+        nps_path = data_path / "NPS"
         if not nps_path.exists():
             pytest.skip("NPS folder not found")
 
         csv_files = list(nps_path.glob("*.csv"))
-
         if not csv_files:
             pytest.skip("No NPS CSV files found")
 
@@ -169,22 +176,20 @@ class TestSanjayFullFY2425:
             if result.success:
                 num_txns = len(result.transactions)
                 print(f"NPS {csv_file.name}: {num_txns} transactions")
-                # Calculate tier totals from transactions
                 tier1_total = sum(t.amount for t in result.transactions if t.tier == "I")
                 tier2_total = sum(t.amount for t in result.transactions if t.tier == "II")
                 print(f"  Tier I: {tier1_total:,.2f}")
                 print(f"  Tier II: {tier2_total:,.2f}")
 
-    def test_07_parse_ppf(self, db_connection):
+    def test_07_parse_ppf(self, db_connection, data_path):
         """Parse PPF statement."""
         from pfas.parsers.ppf import PPFParser
 
-        ppf_path = self.DATA_PATH / "PPF"
+        ppf_path = data_path / "PPF"
         if not ppf_path.exists():
             pytest.skip("PPF folder not found")
 
         xlsx_files = list(ppf_path.glob("*.xlsx"))
-
         if not xlsx_files:
             pytest.skip("No PPF Excel files found")
 
@@ -195,20 +200,18 @@ class TestSanjayFullFY2425:
             if result.success:
                 num_txns = len(result.transactions)
                 print(f"PPF {xlsx_file.name}: {num_txns} transactions")
-                # Calculate 80C eligible deposits
                 deposits = sum(t.amount for t in result.transactions if t.transaction_type == "DEPOSIT")
                 print(f"  Total Deposits (80C eligible): {deposits:,.2f}")
 
-    def test_08_parse_epf(self, db_connection):
+    def test_08_parse_epf(self, db_connection, data_path):
         """Parse EPF passbook."""
         from pfas.parsers.epf import EPFParser
 
-        epf_path = self.DATA_PATH / "EPF"
+        epf_path = data_path / "EPF"
         if not epf_path.exists():
             pytest.skip("EPF folder not found")
 
         pdf_files = list(epf_path.glob("*.pdf"))
-
         if not pdf_files:
             pytest.skip("No EPF PDF files found")
 
@@ -219,7 +222,6 @@ class TestSanjayFullFY2425:
             if result.success:
                 num_txns = len(result.transactions)
                 print(f"EPF {pdf_file.name}: {num_txns} transactions")
-                # Get closing balance from account if available
                 if result.account:
                     total_balance = result.account.employee_balance + result.account.employer_balance
                     print(f"  Closing Balance: {total_balance:,.2f}")
@@ -243,7 +245,6 @@ class TestSanjayFullFY2425:
         print(f"Total Liabilities: {snapshot.total_liabilities:,.2f}")
         print(f"Net Worth: {snapshot.net_worth:,.2f}")
 
-        # Balance sheet should have some assets from parsed data
         assert snapshot.total_assets >= Decimal("0")
         assert snapshot.net_worth is not None
 
@@ -285,7 +286,6 @@ class TestSanjayFullFY2425:
         print(f"Unrealized Gain: {summary.total_unrealized_gain:,.2f}")
         print(f"Holdings: {len(summary.holdings)}")
 
-        # Try XIRR calculation
         xirr_result = service.calculate_xirr(user_id=1)
         if xirr_result.xirr_percent is not None:
             print(f"XIRR: {xirr_result.xirr_percent:.2f}%")
@@ -294,7 +294,6 @@ class TestSanjayFullFY2425:
 
     def test_12_verify_database_integrity(self, db_connection):
         """Verify database integrity after all parsing."""
-        # Check for orphaned records
         cursor = db_connection.execute("""
             SELECT name FROM sqlite_master
             WHERE type='table' AND name NOT LIKE 'sqlite_%'
@@ -304,7 +303,6 @@ class TestSanjayFullFY2425:
         print(f"\n=== Database Integrity Check ===")
         print(f"Tables created: {len(tables)}")
 
-        # Count records in key tables
         key_tables = ['mf_transactions', 'stock_trades', 'epf_transactions',
                       'nps_transactions', 'ppf_transactions']
 
@@ -314,7 +312,6 @@ class TestSanjayFullFY2425:
                 count = cursor.fetchone()[0]
                 print(f"  {table}: {count} records")
 
-        # Verify no unbalanced journals (if any were created)
         cursor = db_connection.execute("""
             SELECT COUNT(*) FROM journals j
             JOIN journal_entries je ON j.id = je.journal_id
@@ -327,10 +324,8 @@ class TestSanjayFullFY2425:
         print("All journal entries balanced.")
 
 
-class TestSanjayMFCapitalGains:
+class TestMFCapitalGains:
     """Test MF capital gains calculation with real data."""
-
-    DATA_PATH = Path("Data/Users/Sanjay")
 
     @pytest.fixture(scope="class")
     def db_connection(self):
@@ -342,7 +337,7 @@ class TestSanjayMFCapitalGains:
 
         conn.execute("""
             INSERT INTO users (id, pan_encrypted, pan_salt, name, email)
-            VALUES (1, X'00', X'00', 'Sanjay', 'sanjay@example.com')
+            VALUES (1, X'00', X'00', 'Test User', 'test@example.com')
         """)
         conn.commit()
 
@@ -351,19 +346,23 @@ class TestSanjayMFCapitalGains:
         db.close()
         DatabaseManager.reset_instance()
 
-    def test_01_mf_capital_gains_calculation(self, db_connection):
+    def test_01_mf_capital_gains_calculation(self, db_connection, path_resolver):
         """Calculate MF capital gains for FY24-25."""
         from pfas.parsers.mf import CAMSParser, CapitalGainsCalculator
 
-        # First load transactions
-        parser = CAMSParser(db_connection)
-        cams_files = list((self.DATA_PATH / "Mutual-Fund/CAMS").glob("*.xlsx"))
+        mf_path = path_resolver.user_dir / "Mutual-Fund/CAMS"
+        if not mf_path.exists():
+            pytest.skip("CAMS folder not found")
 
+        cams_files = list(mf_path.glob("*.xlsx"))
+        if not cams_files:
+            pytest.skip("No CAMS files found")
+
+        parser = CAMSParser(db_connection)
         for cams_file in cams_files:
             if "Consolidated" in cams_file.name:
                 parser.parse(cams_file)
 
-        # Calculate capital gains
         calculator = CapitalGainsCalculator(db_connection)
         summaries = calculator.calculate_summary(user_id=1, fy="2024-25")
 
@@ -377,10 +376,8 @@ class TestSanjayMFCapitalGains:
             print(f"  Taxable LTCG: {summary.taxable_ltcg:,.2f}")
 
 
-class TestSanjayStockCapitalGains:
+class TestStockCapitalGains:
     """Test stock capital gains calculation with real data."""
-
-    DATA_PATH = Path("Data/Users/Sanjay")
 
     @pytest.fixture(scope="class")
     def db_connection(self):
@@ -392,7 +389,7 @@ class TestSanjayStockCapitalGains:
 
         conn.execute("""
             INSERT INTO users (id, pan_encrypted, pan_salt, name, email)
-            VALUES (1, X'00', X'00', 'Sanjay', 'sanjay@example.com')
+            VALUES (1, X'00', X'00', 'Test User', 'test@example.com')
         """)
         conn.commit()
 
@@ -401,13 +398,15 @@ class TestSanjayStockCapitalGains:
         db.close()
         DatabaseManager.reset_instance()
 
-    def test_01_stock_capital_gains_zerodha(self, db_connection):
+    def test_01_stock_capital_gains_zerodha(self, db_connection, path_resolver):
         """Calculate stock capital gains from Zerodha."""
         from pfas.parsers.stock import ZerodhaParser
 
-        zerodha_path = self.DATA_PATH / "Indian-Stocks/Zerodha"
-        pnl_files = list(zerodha_path.glob("taxpnl*.xlsx"))
+        zerodha_path = path_resolver.user_dir / "Indian-Stocks/Zerodha"
+        if not zerodha_path.exists():
+            pytest.skip("Zerodha folder not found")
 
+        pnl_files = list(zerodha_path.glob("taxpnl*.xlsx"))
         if not pnl_files:
             pytest.skip("No Zerodha files found")
 
@@ -419,7 +418,6 @@ class TestSanjayStockCapitalGains:
                 num_trades = len(result.trades)
                 print(f"\n=== Zerodha Capital Gains {pnl_file.name} ===")
                 print(f"Total Trades: {num_trades}")
-                # Calculate capital gains from trades (only SELL trades have capital_gain)
                 sell_trades = [t for t in result.trades if t.trade_type.value == "SELL"]
                 stcg = sum(t.capital_gain or Decimal(0) for t in sell_trades if not t.is_ltcg())
                 ltcg = sum(t.capital_gain or Decimal(0) for t in sell_trades if t.is_ltcg())

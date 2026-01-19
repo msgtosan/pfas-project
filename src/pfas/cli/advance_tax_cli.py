@@ -9,11 +9,26 @@ Usage:
 
 import argparse
 import sys
+import os
 from pathlib import Path
 from decimal import Decimal
 
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
+
+from pfas.core.paths import PathResolver
+
+
+def _get_data_root():
+    """Get data root from environment or relative to working directory."""
+    if 'PFAS_DATA_ROOT' in os.environ:
+        return Path(os.environ['PFAS_DATA_ROOT'])
+    # Try project-relative path
+    for candidate in ['Data', '../Data', '../../Data']:
+        if Path(candidate).exists():
+            return Path(candidate)
+    return Path('Data')
+
 
 try:
     import sqlcipher3 as sqlite3
@@ -63,7 +78,7 @@ def get_or_create_user(conn, user_name: str) -> int:
     return cursor.lastrowid
 
 
-def import_income_from_files(conn, user_id: int, user_name: str, financial_year: str):
+def import_income_from_files(conn, user_id: int, resolver: PathResolver, financial_year: str):
     """
     Import income data from user's files into database.
     This bridges the gap between file-based data and database.
@@ -71,10 +86,12 @@ def import_income_from_files(conn, user_id: int, user_name: str, financial_year:
     from pfas.services.income_aggregation_service import IncomeAggregationService
     import pandas as pd
 
-    base_path = Path("Data/Users") / user_name
+    base_path = resolver.user_dir
     if not base_path.exists():
         print(f"Warning: User data folder not found: {base_path}")
         return
+
+    user_name = resolver.user_name
 
     print(f"Importing income data for {user_name} FY {financial_year}...")
 
@@ -294,24 +311,29 @@ def _import_other_income(conn, user_id: int, file_path: Path, financial_year: st
 
 def generate_reports(
     conn,
-    user_name: str,
+    resolver: PathResolver,
     financial_years: list[str],
     tax_regime: str,
-    output_path: str
+    output_format: str = "xlsx"
 ):
     """Generate advance tax reports."""
     from pfas.reports.advance_tax_report_v2 import AdvanceTaxReportGeneratorV2
 
-    user_id = get_or_create_user(conn, user_name)
-    generator = AdvanceTaxReportGeneratorV2(conn, Path(output_path))
+    user_id = get_or_create_user(conn, resolver.user_name)
+
+    # Reports go to user's reports directory
+    output_dir = resolver.reports() / "tax_computation"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    generator = AdvanceTaxReportGeneratorV2(conn, output_dir)
 
     reports = []
     for fy in financial_years:
         # Import data from files if needed
-        import_income_from_files(conn, user_id, user_name, fy)
+        import_income_from_files(conn, user_id, resolver, fy)
 
         # Generate report
-        report_path = generator.generate_report(user_id, user_name, fy, tax_regime)
+        report_path = generator.generate_report(user_id, resolver.user_name, fy, tax_regime)
         reports.append(report_path)
         print(f"Generated: {report_path}")
 
@@ -337,14 +359,13 @@ def main():
         help="Tax regime (default: NEW)"
     )
     parser.add_argument(
-        "--output", "-o",
-        default="Data/Reports",
-        help="Output directory (default: Data/Reports)"
+        "--format",
+        choices=["xlsx", "pdf", "json"],
+        help="Output format (default: from user preferences)"
     )
     parser.add_argument(
-        "--db", "-d",
-        default="Data/pfas.db",
-        help="Database path (default: Data/pfas.db)"
+        "--data-root",
+        help="Data root directory (default: from PFAS_DATA_ROOT or auto-detect)"
     )
     parser.add_argument(
         "--init-db",
@@ -354,11 +375,17 @@ def main():
 
     args = parser.parse_args()
 
-    # Initialize or connect to database
-    db_path = args.db
+    # Get data root
+    data_root = Path(args.data_root) if args.data_root else _get_data_root()
     password = "pfas_secure_2024"
 
     if args.init_db:
+        # Initialize with a temporary resolver for db path
+        if args.user:
+            resolver = PathResolver(data_root, args.user)
+            db_path = str(resolver.db_path())
+        else:
+            db_path = str(data_root / "pfas.db")
         init_database(db_path, password)
         if not args.user:
             return 0
@@ -367,32 +394,48 @@ def main():
     if not args.user:
         parser.error("--user is required for report generation")
 
-    # Connect to existing database
+    # Initialize PathResolver for the user
+    resolver = PathResolver(data_root, args.user)
+    resolver.ensure_user_structure()
+
+    # Load user preferences
+    prefs = resolver.get_preferences()
+
+    # Get format from args or preferences
+    output_format = args.format or prefs.reports.default_format
+
+    # Connect to user's database
     from pfas.core.database import DatabaseManager
     from pfas.core.tax_schema import init_tax_schema
 
     db = DatabaseManager()
-    conn = db.init(db_path, password)
+    conn = db.init(str(resolver.db_path()), password)
 
     # Ensure tax schema exists
     init_tax_schema(conn)
 
-    # Parse financial years
+    # Parse financial years from args or preferences
     if args.fy:
         financial_years = [fy.strip() for fy in args.fy.split(",")]
     else:
-        financial_years = ["2024-25", "2025-26"]
+        financial_years = [prefs.default_fy]
+
+    print(f"\nPFAS Advance Tax Report")
+    print(f"User: {args.user}")
+    print(f"Data: {resolver.user_dir}")
+    print(f"FY(s): {', '.join(financial_years)}")
+    print(f"Format: {output_format}")
 
     # Generate reports
     reports = generate_reports(
         conn,
-        args.user,
+        resolver,
         financial_years,
         args.regime,
-        args.output
+        output_format
     )
 
-    print(f"\nGenerated {len(reports)} report(s)")
+    print(f"\nGenerated {len(reports)} report(s) in: {resolver.reports() / 'tax_computation'}")
     return 0
 
 

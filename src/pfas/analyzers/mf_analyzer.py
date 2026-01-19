@@ -232,13 +232,19 @@ class MFStatementScanner:
     def _detect_statement_type(self, file_path: Path) -> StatementType:
         """
         Detect statement type from filename and file content.
-
         Priority:
         1. Filename patterns (CG, capital, gain for CG files)
         2. Excel sheet names inspection
         3. Default to HOLDINGS if unsure
         """
         name_lower = file_path.name.lower()
+
+        if any(k in name_lower for k in ["transaction", "txn", "trxn", "buy", "sell", "redeem", "dividend"]):
+              return StatementType.TRANSACTIONS
+        
+        if any(k in name_lower for k in ["holding", "holdings", "summary", "balance", "portfolio"]):
+              return StatementType.HOLDINGS
+        
 
         # Capital gains files
         if "cg" in name_lower or "capital" in name_lower or "gain" in name_lower:
@@ -272,7 +278,7 @@ class MFStatementScanner:
             return StatementType.HOLDINGS
 
         # Default to holdings (most common)
-        return StatementType.HOLDINGS
+        return StatementType.TRANSACTIONS
 
     def _extract_date_from_filename(self, filename: str) -> Optional[date]:
         """Extract date from filename patterns."""
@@ -1208,7 +1214,7 @@ class MFAnalyzer:
 
         # Determine MF folder
         if mf_folder is None:
-            data_root = Path(self.config.get("paths", {}).get("data_root", f"Data/Users/{user_name}"))
+            data_root = Path(self.config.get("paths", {}).get("data_root", f"Data/Users/{user_name}/inbox"))
             mf_subfolder = self.config.get("paths", {}).get("mf_folder", "Mutual-Fund")
             mf_folder = data_root / mf_subfolder
 

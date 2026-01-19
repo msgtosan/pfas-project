@@ -232,3 +232,18 @@ htmlcov/
 
 # VSCode / IDE settings
 .vscode/
+
+# Ignore all user data & outputs
+Data/
+users/
+reports/
+*.db
+*.db.bak
+*.pdf
+*.xlsx
+*.csv
+Users/*/config/passwords.json
+
+# Test-specific
+tests/integration/golden_masters/*.golden.*
+!tests/integration/golden_masters/.gitkeep

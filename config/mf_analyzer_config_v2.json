@@ -1,0 +1,342 @@
+{
+  "$schema": "./mf_analyzer_schema.json",
+  "version": "2.0.0",
+  "description": "Enhanced MF Analyzer configuration with reconciliation, FY reports, and growth tracking",
+
+  "user": {
+    "name": "Sanjay",
+    "pan_prefix": "AAPPS",
+    "email": "sanjay@example.com"
+  },
+
+  "paths": {
+    "data_root": "Data/Users/{user}",
+    "inbox": "inbox/Mutual-Fund",
+    "archive": "archive/Mutual-Fund",
+    "reports_output": "reports/Mutual-Fund",
+    "database": "db/finance.db",
+    "cams_subfolder": "CAMS",
+    "karvy_subfolder": "KARVY"
+  },
+
+  "file_patterns": {
+    "cams": {
+      "transaction_patterns": ["*CG_FY*", "*CAMS*CG*", "*capital*gain*"],
+      "holding_patterns": ["*CAMS*holding*", "*CAMS*consolidated*", "*CAMS*summary*"],
+      "extensions": [".xlsx", ".xls", ".pdf"],
+      "exclude_patterns": ["~$*", "*.tmp", "*.bak"]
+    },
+    "karvy": {
+      "transaction_patterns": ["*Karvy*CG*", "*KFintech*CG*", "*KFIN*capital*"],
+      "holding_patterns": ["*Karvy*holding*", "*KFintech*consolidated*"],
+      "extensions": [".xlsx", ".xls", ".pdf"],
+      "exclude_patterns": ["~$*", "*.tmp", "*.bak"]
+    }
+  },
+
+  "statement_types": {
+    "capital_gains": {
+      "cams_sheets": ["TRXN_DETAILS", "Transaction_Details", "CG_Details"],
+      "karvy_sheets": ["Trasaction_Details", "Transaction_Details", "CG_Statement"],
+      "cams_header_row": 3,
+      "karvy_header_row": 4
+    },
+    "holdings": {
+      "cams_sheets": ["Holdings", "HOLDINGS", "Summary", "By Mutual Fund"],
+      "karvy_sheets": ["By Mutual Fund", "By Investor", "Holdings", "Sheet1"],
+      "cams_header_row": 0,
+      "karvy_header_row": 0
+    }
+  },
+
+  "field_mappings": {
+    "cams_holdings": {
+      "AMCName": "amc_name",
+      "AMC Name": "amc_name",
+      "Scheme": "scheme_name",
+      "Scheme Name": "scheme_name",
+      "Type": "scheme_type",
+      "Folio": "folio_number",
+      "Folio No": "folio_number",
+      "InvestorName": "investor_name",
+      "Investor Name": "investor_name",
+      "UnitBal": "units",
+      "Units": "units",
+      "Unit Balance": "units",
+      "NAVDate": "nav_date",
+      "NAV Date": "nav_date",
+      "CurrentValue": "current_value",
+      "Current Value": "current_value",
+      "CostValue": "cost_value",
+      "Cost Value": "cost_value",
+      "Appreciation": "appreciation",
+      "WtgAvg": "average_holding_days",
+      "Avg Age Days": "average_holding_days",
+      "Annualised XIRR": "annualized_return",
+      "XIRR": "annualized_return",
+      "ISIN": "isin"
+    },
+    "karvy_holdings": {
+      "Fund Name": "amc_name",
+      " Fund Name": "amc_name",
+      "Scheme Name": "scheme_name",
+      "Folio": "folio_number",
+      "Folio Number": "folio_number",
+      "Investor Name": "investor_name",
+      "Unit Balance": "units",
+      "Units": "units",
+      "Nav Date": "nav_date",
+      "NAV Date": "nav_date",
+      "Current Value (Rs.)": "current_value",
+      "Current Value": "current_value",
+      "Cost Value (Rs.)": "cost_value",
+      "Cost Value": "cost_value",
+      "Appreciation (Rs.)": "appreciation",
+      "Appreciation": "appreciation",
+      "AvgAgeDays": "average_holding_days",
+      "Avg Age Days": "average_holding_days",
+      "Annualized Yield (%)": "annualized_return",
+      "Yield": "annualized_return",
+      "Dividend Payout": "dividend_payout",
+      "Dividend Re-Invest": "dividend_reinvest",
+      "ISIN": "isin"
+    },
+    "cams_transactions": {
+      "Transaction Date": "transaction_date",
+      "Type": "transaction_type",
+      "Units": "units",
+      "NAV": "nav",
+      "Amount": "amount",
+      "STT": "stt",
+      "Stamp Duty": "stamp_duty"
+    },
+    "karvy_transactions": {
+      "Txn Date": "transaction_date",
+      "Txn Type": "transaction_type",
+      "Units": "units",
+      "NAV": "nav",
+      "Amount": "amount"
+    }
+  },
+
+  "value_transforms": {
+    "current_value": {
+      "type": "decimal",
+      "remove_chars": ["Rs.", "Rs", ",", " ", "INR"],
+      "precision": 2
+    },
+    "cost_value": {
+      "type": "decimal",
+      "remove_chars": ["Rs.", "Rs", ",", " ", "INR"],
+      "precision": 2
+    },
+    "appreciation": {
+      "type": "decimal",
+      "remove_chars": ["Rs.", "Rs", ",", " ", "INR"],
+      "precision": 2
+    },
+    "units": {
+      "type": "decimal",
+      "precision": 4
+    },
+    "nav": {
+      "type": "decimal",
+      "precision": 4
+    },
+    "annualized_return": {
+      "type": "decimal",
+      "remove_chars": ["%", " "],
+      "precision": 4
+    },
+    "nav_date": {
+      "type": "date",
+      "formats": ["%d-%b-%Y", "%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%d %b %Y"]
+    },
+    "transaction_date": {
+      "type": "date",
+      "formats": ["%d-%b-%Y", "%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y"]
+    },
+    "average_holding_days": {
+      "type": "integer"
+    }
+  },
+
+  "scheme_classification": {
+    "equity_keywords": [
+      "EQUITY", "BLUECHIP", "LARGE CAP", "LARGECAP", "MIDCAP", "MID CAP",
+      "SMALLCAP", "SMALL CAP", "ELSS", "TAX SAVER", "INDEX", "NIFTY", "SENSEX",
+      "BANKING", "PHARMA", "TECHNOLOGY", "IT FUND", "VALUE", "MOMENTUM",
+      "FLEXI CAP", "MULTI CAP", "FOCUSED", "DIVIDEND YIELD", "GROWTH",
+      "CONTRA", "SECTORAL", "THEMATIC", "EMERGING"
+    ],
+    "debt_keywords": [
+      "DEBT", "BOND", "GILT", "LIQUID", "MONEY MARKET", "ULTRA SHORT",
+      "LOW DURATION", "OVERNIGHT", "TREASURY", "SHORT DURATION",
+      "MEDIUM DURATION", "LONG DURATION", "DYNAMIC BOND", "CREDIT RISK",
+      "BANKING PSU", "CORPORATE BOND", "FLOATER", "INCOME", "FMP",
+      "TARGET MATURITY", "FIXED MATURITY"
+    ],
+    "hybrid_keywords": [
+      "HYBRID", "BALANCED", "AGGRESSIVE HYBRID", "CONSERVATIVE HYBRID",
+      "BALANCED ADVANTAGE", "DYNAMIC ASSET", "MULTI ASSET", "EQUITY SAVINGS",
+      "ARBITRAGE"
+    ],
+    "default_class": "OTHER"
+  },
+
+  "amc_name_extraction": {
+    "patterns": [
+      {"regex": "^(.*?Mutual Fund)", "group": 1},
+      {"regex": "^(.*?)\\s+(Direct|Regular)", "group": 1},
+      {"regex": "^(.*?)\\s+-", "group": 1}
+    ],
+    "known_amcs": [
+      "HDFC Mutual Fund", "ICICI Prudential Mutual Fund", "SBI Mutual Fund",
+      "Axis Mutual Fund", "Kotak Mutual Fund", "Nippon India Mutual Fund",
+      "Aditya Birla Sun Life Mutual Fund", "UTI Mutual Fund", "DSP Mutual Fund",
+      "Tata Mutual Fund", "Franklin Templeton Mutual Fund", "Mirae Asset Mutual Fund",
+      "Invesco Mutual Fund", "PGIM India Mutual Fund", "Motilal Oswal Mutual Fund",
+      "Edelweiss Mutual Fund", "HSBC Mutual Fund", "L&T Mutual Fund",
+      "Mahindra Manulife Mutual Fund", "Canara Robeco Mutual Fund",
+      "Sundaram Mutual Fund", "IDFC Mutual Fund", "Parag Parikh Mutual Fund",
+      "Quant Mutual Fund", "Bank of India Mutual Fund", "ITI Mutual Fund"
+    ],
+    "fallback": "Unknown AMC"
+  },
+
+  "report_settings": {
+    "excel": {
+      "sheets": [
+        "Summary",
+        "By Category",
+        "By AMC",
+        "By Folio",
+        "Scheme Details",
+        "FY Transactions",
+        "Capital Gains",
+        "Holdings History",
+        "YoY Growth",
+        "Reconciliation"
+      ],
+      "date_format": "DD-MMM-YYYY",
+      "currency_format": "#,##0.00",
+      "percentage_format": "0.00%",
+      "header_style": {
+        "bold": true,
+        "bg_color": "#4472C4",
+        "font_color": "#FFFFFF"
+      },
+      "alternating_row_colors": true
+    },
+    "summary_metrics": [
+      "total_current_value",
+      "total_cost_value",
+      "total_appreciation",
+      "appreciation_percentage",
+      "weighted_xirr",
+      "equity_value",
+      "equity_allocation_pct",
+      "debt_value",
+      "debt_allocation_pct",
+      "hybrid_value",
+      "hybrid_allocation_pct",
+      "scheme_count",
+      "folio_count",
+      "amc_count"
+    ],
+    "fy_report": {
+      "include_transactions": true,
+      "include_capital_gains": true,
+      "include_dividends": true,
+      "group_by": ["scheme_type", "amc_name", "rta"]
+    },
+    "scheme_details": {
+      "columns": [
+        "amc_name", "scheme_name", "folio_number", "isin", "scheme_type",
+        "units", "nav", "current_value", "cost_value", "appreciation",
+        "annualized_return", "pct_of_portfolio"
+      ]
+    },
+    "yoy_growth": {
+      "fiscal_years": 5,
+      "metrics": ["total_value", "appreciation", "equity_value", "debt_value"]
+    }
+  },
+
+  "reconciliation": {
+    "enabled": true,
+    "tolerance_amount": 1.00,
+    "tolerance_percentage": 0.01,
+    "compare_fields": ["stcg_amount", "ltcg_amount", "total_gain"],
+    "audit_trail": true,
+    "sources": {
+      "cams": {
+        "statement_type": "capital_gains",
+        "summary_sheet": "Summary",
+        "detail_sheet": "TRXN_DETAILS"
+      },
+      "karvy": {
+        "statement_type": "capital_gains",
+        "summary_sheet": "Summary",
+        "detail_sheet": "Trasaction_Details"
+      }
+    }
+  },
+
+  "financial_years": {
+    "current_fy": "2024-25",
+    "history_years": 10,
+    "grandfathering_date": "2018-01-31",
+    "fy_start_month": 4,
+    "tax_rates": {
+      "2024-25": {
+        "equity_stcg": 20.0,
+        "equity_ltcg": 12.5,
+        "equity_ltcg_exemption": 125000,
+        "debt_stcg": "slab",
+        "debt_ltcg": "slab"
+      },
+      "2023-24": {
+        "equity_stcg": 15.0,
+        "equity_ltcg": 10.0,
+        "equity_ltcg_exemption": 100000,
+        "debt_stcg": "slab",
+        "debt_ltcg": "slab"
+      }
+    }
+  },
+
+  "processing": {
+    "skip_zero_holdings": true,
+    "use_xirr_over_yield": true,
+    "classify_unknown_schemes": true,
+    "detect_duplicates": true,
+    "max_history_years": 25,
+    "archive_processed_files": true,
+    "generate_json_output": true,
+    "parallel_processing": false,
+    "batch_size": 100
+  },
+
+  "archiver": {
+    "enabled": true,
+    "strategy": "move",
+    "preserve_folder_structure": true,
+    "add_timestamp": false
+  },
+
+  "notifications": {
+    "enabled": false,
+    "on_completion": true,
+    "on_error": true,
+    "email": null
+  },
+
+  "logging": {
+    "level": "INFO",
+    "file": "logs/mf_analyzer.log",
+    "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    "max_size_mb": 10,
+    "backup_count": 5
+  }
+}

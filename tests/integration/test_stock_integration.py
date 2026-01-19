@@ -1,175 +1,71 @@
-#!/usr/bin/env python3
-"""Integration test for Stock (Zerodha) parser with real data."""
+"""Stock Parser Integration Test - Refactored"""
 
-import sys
-from pathlib import Path
-from datetime import date
+import pytest
 from decimal import Decimal
+from pathlib import Path
+from pfas.parsers.stock.zerodha import ZerodhaParser
+from pfas.parsers.stock.icici import ICICIDirectParser
 
-# Add src to path
-sys.path.insert(0, str(Path(__file__).parent / "src"))
 
-def test_stock_parser():
-    """Run integration test with real Zerodha Tax P&L data."""
+def get_stock_parser(file_path: Path, db_connection):
+    """Get appropriate parser based on file path/name."""
+    name_upper = file_path.name.upper()
+    if 'ICICI' in name_upper or 'ICICIDIRECT' in name_upper:
+        return ICICIDirectParser(db_connection), "ICICIDirect"
+    else:
+        return ZerodhaParser(db_connection), "Zerodha"
 
-    print("="*70)
-    print("STOCK (ZERODHA) INTEGRATION TEST")
-    print("="*70 + "\n")
 
-    # File path
-    stock_file = Path.home() / "projects/pfas-project/Data/Users/Sanjay/Indian-Stocks/Zerodha/taxpnl-QY6347-2024_2025-Q1-Q4.xlsx"
+class TestStockParser:
+    """Stock parser integration tests (auto-detects Zerodha vs ICICI Direct)."""
 
-    print(f"📁 Test File: {stock_file.name}")
-    print(f"   Full Path: {stock_file}")
-    print(f"   File exists: {stock_file.exists()}")
-
-    if stock_file.exists():
-        print(f"   Size: {stock_file.stat().st_size / 1024:.1f} KB")
-    print()
-
-    if not stock_file.exists():
-        print(f"❌ File not found: {stock_file}")
-        return False
-
-    # Import parsers
-    print("📦 Importing modules...")
-    try:
-        import sqlite3
-        from pfas.parsers.stock.zerodha import ZerodhaParser
-        from pfas.core.database import DatabaseManager
-        print("✅ Imports successful\n")
-    except ImportError as e:
-        print(f"❌ Import error: {e}")
-        print("   Install dependencies: pip install pandas openpyxl sqlcipher3")
-        return False
-
-    # Create in-memory database
-    print("📊 Initializing database...")
-    try:
-        db_manager = DatabaseManager()
-        conn = db_manager.init(":memory:", "test_password")
-        print("✅ Database initialized\n")
-    except Exception as e:
-        print(f"❌ Database initialization failed: {e}")
-        return False
-
-    # Parse Zerodha file
-    print("📖 Parsing Zerodha Tax P&L...")
-    try:
-        parser = ZerodhaParser(conn)
+    def test_stock_parse_basic(self, stock_file, test_db):
+        """Test basic stock parsing."""
+        parser, broker = get_stock_parser(stock_file, test_db)
         result = parser.parse(stock_file)
 
-        print(f"   Success: {result.success}")
-        print(f"   Trades parsed: {len(result.trades)}")
-        print(f"   Errors: {len(result.errors)}")
-        print(f"   Warnings: {len(result.warnings)}\n")
+        assert result.success, f"Parse failed: {result.errors}"
+        # Some files may have 0 trades (e.g., no exits in period)
+        print(f"\n✓ [{broker}] Parsed {len(result.trades)} trades from {stock_file.name}")
 
-        if result.errors:
-            print("   Errors:")
-            for err in result.errors[:3]:
-                print(f"      - {err}")
-            if len(result.errors) > 3:
-                print(f"      ... and {len(result.errors) - 3} more")
-            print()
+    def test_stock_trade_types(self, stock_file, test_db):
+        """Test trade type classification."""
+        parser, broker = get_stock_parser(stock_file, test_db)
+        result = parser.parse(stock_file)
 
-    except Exception as e:
-        print(f"❌ Parsing failed: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
+        if not result.success:
+            pytest.skip(f"Parse failed: {result.errors}")
 
-    # Display parsed trades
-    if result.trades:
-        print("📋 Sample Trades (first 5):")
-
-        # Group by type
         buy_trades = [t for t in result.trades if t.trade_type.value == "BUY"]
         sell_trades = [t for t in result.trades if t.trade_type.value == "SELL"]
 
-        print(f"\n   Buy Trades: {len(buy_trades)}")
-        print(f"   Sell Trades: {len(sell_trades)}")
-        print(f"   Total Trades: {len(result.trades)}\n")
+        print(f"\n✓ [{broker}] Buy: {len(buy_trades)}, Sell: {len(sell_trades)}")
 
-        # Show sample trades
-        for i, trade in enumerate(result.trades[:5], 1):
-            print(f"\n   Trade {i}:")
-            print(f"      Symbol: {trade.symbol}")
-            print(f"      Type: {trade.trade_type.value}")
-            print(f"      Date: {trade.trade_date}")
-            print(f"      Quantity: {trade.quantity}")
-            print(f"      Price: ₹{trade.price}")
-            print(f"      Amount: ₹{trade.amount:,.2f}")
-            print(f"      Category: {trade.trade_category.value if trade.trade_category else 'N/A'}")
+    def test_stock_save_to_db(self, stock_file, clean_db, test_user_id):
+        """Test database persistence."""
+        parser, broker = get_stock_parser(stock_file, clean_db)
+        result = parser.parse(stock_file)
 
-            if trade.is_long_term is not None:
-                print(f"      Long Term: {trade.is_long_term}")
-            if trade.capital_gain:
-                print(f"      Capital Gain: ₹{trade.capital_gain:,.2f}")
+        if not result.success or len(result.trades) == 0:
+            pytest.skip(f"No trades to save: {result.errors}")
 
-        if len(result.trades) > 5:
-            print(f"\n   ... and {len(result.trades) - 5} more trades")
+        count = parser.save_to_db(result, user_id=test_user_id, broker_name=broker)
+        assert count > 0
 
-        # Calculate summary
-        print("\n\n💰 Trade Summary:")
+        # Verify data in database
+        cursor = clean_db.execute("SELECT COUNT(*) as cnt FROM stock_trades")
+        assert cursor.fetchone()['cnt'] == count
 
-        # By category
-        delivery_trades = [t for t in result.trades if t.trade_category and t.trade_category.value == "DELIVERY"]
-        intraday_trades = [t for t in result.trades if t.trade_category and t.trade_category.value == "INTRADAY"]
-        fno_trades = [t for t in result.trades if t.trade_category and t.trade_category.value == "FNO"]
+        print(f"\n✓ Saved {count} trades")
 
-        print(f"\n   By Category:")
-        print(f"      Delivery: {len(delivery_trades)} trades")
-        print(f"      Intraday: {len(intraday_trades)} trades")
-        print(f"      F&O: {len(fno_trades)} trades")
+    def test_stock_capital_gains(self, stock_file, test_db):
+        """Test capital gains calculation."""
+        parser, broker = get_stock_parser(stock_file, test_db)
+        result = parser.parse(stock_file)
 
-        # By symbol
-        symbols = {}
-        for trade in result.trades:
-            if trade.symbol not in symbols:
-                symbols[trade.symbol] = 0
-            symbols[trade.symbol] += 1
-
-        print(f"\n   Unique Symbols: {len(symbols)}")
-        if symbols:
-            print(f"   Top 5 symbols:")
-            for symbol, count in sorted(symbols.items(), key=lambda x: x[1], reverse=True)[:5]:
-                print(f"      {symbol}: {count} trades")
-
-        # Capital gains
         total_capital_gain = sum(
             t.capital_gain for t in result.trades
             if t.capital_gain and t.capital_gain != Decimal("0")
         )
 
-        print(f"\n   Total Capital Gain: ₹{total_capital_gain:,.2f}")
-
-    # Database save test
-    print("\n\n💾 Testing database persistence...")
-    try:
-        count = parser.save_to_db(result, user_id=1, broker_name="Zerodha")
-        print(f"✅ Saved {count} trades to database")
-
-        # Verify data in database
-        cursor = conn.execute("SELECT COUNT(*) as cnt FROM stock_trades")
-        row = cursor.fetchone()
-        print(f"✅ Verified: {row['cnt']} trades in database")
-
-        cursor = conn.execute("SELECT COUNT(*) as cnt FROM stock_brokers")
-        row = cursor.fetchone()
-        print(f"✅ Verified: {row['cnt']} brokers in database")
-
-    except Exception as e:
-        print(f"❌ Database save failed: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
-
-    print("\n" + "="*70)
-    print("✅ STOCK PARSER INTEGRATION TEST PASSED")
-    print("="*70)
-
-    return True
-
-if __name__ == "__main__":
-    success = test_stock_parser()
-    sys.exit(0 if success else 1)
+        print(f"\n✓ Total Capital Gain: ₹{total_capital_gain:,.2f}")

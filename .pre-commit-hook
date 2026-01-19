@@ -1,0 +1,64 @@
+#!/bin/bash
+#
+# Git Pre-Commit Hook for PFAS Project
+#
+# This hook runs regression tests before allowing a commit.
+#
+# To install this hook:
+#   ln -sf ../../.pre-commit-hook .git/hooks/pre-commit
+#   chmod +x .git/hooks/pre-commit
+#
+# To skip the hook for a specific commit (use sparingly):
+#   git commit --no-verify
+#
+
+set -e
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+echo -e "${YELLOW}Running pre-commit regression tests...${NC}"
+echo ""
+
+# Change to repository root
+cd "$(git rev-parse --show-toplevel)"
+
+# Check if we're in a rebase/merge
+if [ -f .git/MERGE_HEAD ] || [ -f .git/rebase-merge/interactive ]; then
+    echo -e "${YELLOW}Merge/rebase in progress, skipping tests${NC}"
+    exit 0
+fi
+
+# Run quick smoke tests (should be fast)
+if ./scripts/run_regression_tests.sh --quick; then
+    echo ""
+    echo -e "${GREEN}✓ Quick smoke tests passed${NC}"
+    echo ""
+
+    # Optionally run full tests
+    # Uncomment the following lines to run full regression suite on every commit
+    # WARNING: This may take 30-60 seconds per commit
+    #
+    # echo -e "${YELLOW}Running full regression suite...${NC}"
+    # if ./scripts/run_regression_tests.sh --full; then
+    #     echo -e "${GREEN}✓ Full regression tests passed${NC}"
+    # else
+    #     echo -e "${RED}✗ Full regression tests failed${NC}"
+    #     echo ""
+    #     echo "Commit aborted. Fix the failing tests or use --no-verify to skip."
+    #     exit 1
+    # fi
+
+    exit 0
+else
+    echo ""
+    echo -e "${RED}✗ Smoke tests failed${NC}"
+    echo ""
+    echo "Commit aborted. Fix the failing tests or use:"
+    echo "  git commit --no-verify"
+    echo "to skip the pre-commit hook (not recommended)."
+    exit 1
+fi
