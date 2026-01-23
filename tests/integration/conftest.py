@@ -5,6 +5,7 @@ Features:
 - PathResolver for ALL paths (NO hardcoding)
 - Multi-user support (PFAS_TEST_USER env var)
 - Multi-asset parameterization
+- Configurable archive fallback (inbox first, then archive)
 - Golden master comparison helpers
 - Graceful skips with helpful messages
 - In-memory DB for isolation
@@ -16,7 +17,7 @@ import pytest
 from pathlib import Path
 from datetime import date
 from decimal import Decimal
-from typing import Generator, Dict, Any, List
+from typing import Generator, Dict, Any, List, Optional
 
 from pfas.core.paths import PathResolver
 from pfas.core.database import DatabaseManager
@@ -27,6 +28,9 @@ DEFAULT_TEST_USER = "Sanjay"
 TEST_USER = os.getenv("PFAS_TEST_USER", DEFAULT_TEST_USER)
 PFAS_TEST_ROOT = os.getenv("PFAS_ROOT", str(Path.cwd()))
 
+# Test configuration - can be overridden via environment or config file
+USE_ARCHIVE_FALLBACK = os.getenv("PFAS_TEST_USE_ARCHIVE", "true").lower() == "true"
+
 TEST_ASSETS = [
     "Mutual-Fund", "Bank", "Indian-Stocks", "Salary",
     "EPF", "NPS", "PPF", "SGB", "USA-Stocks", "FD-Bonds"
@@ -34,6 +38,27 @@ TEST_ASSETS = [
 
 TEST_DB_PASSWORD = "test_password_integration"
 GOLDEN_MASTER_DIR = Path(__file__).parent / "golden_masters"
+
+
+def _load_test_config() -> Dict[str, Any]:
+    """Load test configuration from config/test_config.json."""
+    config_path = Path(PFAS_TEST_ROOT) / "config" / "test_config.json"
+    if config_path.exists():
+        try:
+            with open(config_path, encoding='utf-8') as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"[WARN] Failed to load test config: {e}")
+    return {
+        "file_sources": {
+            "primary": "inbox",
+            "fallback_to_archive": True
+        }
+    }
+
+
+# Load test configuration at module level
+TEST_CONFIG = _load_test_config()
 
 
 # Core Fixtures
@@ -119,40 +144,32 @@ def clean_db(test_db):
 
 
 # Asset-Specific Fixtures
-def _find_latest_file(
-    inbox_path: Path,
+def _search_directory_for_files(
+    search_path: Path,
     extensions: List[str],
-    asset_type: str,
-    user_name: str,
     pattern: str = '*',
     exclude_patterns: List[str] = None
-) -> Path:
-    """Find latest file with graceful skip and pattern filtering.
+) -> List[Path]:
+    """Search a directory for files matching criteria.
 
     Args:
-        inbox_path: Directory to search in
-        extensions: List of file extensions to search for (e.g., ['.pdf', '.xlsx'])
-        asset_type: Asset type name for error messages
-        user_name: User name for error messages
+        search_path: Directory to search in
+        extensions: List of file extensions to search for
         pattern: Glob pattern to match (default: '*' for all files)
-        exclude_patterns: List of patterns to exclude from filename (e.g., ['holdings', 'interest'])
+        exclude_patterns: List of patterns to exclude from filename
 
     Returns:
-        Path to the latest matching file
+        List of matching file paths
     """
-    if not inbox_path.exists():
-        pytest.skip(
-            f"Inbox directory does not exist: {inbox_path}\n"
-            f"User: {user_name}, Asset: {asset_type}\n"
-            f"Create directory and add test files to run this test."
-        )
+    if not search_path.exists():
+        return []
 
     if exclude_patterns is None:
         exclude_patterns = []
 
     files = []
     for ext in extensions:
-        found = list(inbox_path.rglob(f"{pattern}{ext}"))
+        found = list(search_path.rglob(f"{pattern}{ext}"))
         for file in found:
             # Skip files in 'failed' subdirectory
             if 'failed' in file.parts:
@@ -164,144 +181,344 @@ def _find_latest_file(
 
             files.append(file)
 
+    return files
+
+
+def _find_latest_file(
+    inbox_path: Path,
+    extensions: List[str],
+    asset_type: str,
+    user_name: str,
+    pattern: str = '*',
+    exclude_patterns: List[str] = None,
+    archive_path: Optional[Path] = None,
+    use_archive_fallback: Optional[bool] = None
+) -> Path:
+    """Find latest file with graceful skip, pattern filtering, and archive fallback.
+
+    Args:
+        inbox_path: Primary directory to search in (inbox)
+        extensions: List of file extensions to search for (e.g., ['.pdf', '.xlsx'])
+        asset_type: Asset type name for error messages
+        user_name: User name for error messages
+        pattern: Glob pattern to match (default: '*' for all files)
+        exclude_patterns: List of patterns to exclude from filename (e.g., ['holdings', 'interest'])
+        archive_path: Optional archive directory to search if inbox is empty
+        use_archive_fallback: Override global fallback setting (None uses config)
+
+    Returns:
+        Path to the latest matching file
+    """
+    if exclude_patterns is None:
+        exclude_patterns = []
+
+    # Determine if archive fallback should be used
+    if use_archive_fallback is None:
+        fallback_config = TEST_CONFIG.get("file_sources", {})
+        use_archive_fallback = fallback_config.get("fallback_to_archive", USE_ARCHIVE_FALLBACK)
+
+    # Search inbox first
+    files = _search_directory_for_files(inbox_path, extensions, pattern, exclude_patterns)
+    source_used = "inbox"
+
+    # Fallback to archive if inbox is empty and fallback is enabled
+    if not files and use_archive_fallback and archive_path:
+        files = _search_directory_for_files(archive_path, extensions, pattern, exclude_patterns)
+        if files:
+            source_used = "archive"
+            print(f"\n[FIXTURE] Inbox empty, using archive for {asset_type}")
+
+    # If still no files, try archive even if inbox doesn't exist
+    if not files and use_archive_fallback and archive_path and not inbox_path.exists():
+        files = _search_directory_for_files(archive_path, extensions, pattern, exclude_patterns)
+        if files:
+            source_used = "archive"
+            print(f"\n[FIXTURE] Inbox not found, using archive for {asset_type}")
+
     if not files:
+        # Build helpful error message
+        searched_paths = [str(inbox_path)]
+        if use_archive_fallback and archive_path:
+            searched_paths.append(str(archive_path))
+
         pytest.skip(
-            f"No {asset_type} files found in: {inbox_path}\n"
+            f"No {asset_type} files found.\n"
+            f"User: {user_name}\n"
+            f"Searched paths:\n  - " + "\n  - ".join(searched_paths) + "\n"
             f"Expected extensions: {', '.join(extensions)}\n"
             f"Pattern: {pattern}\n"
             f"Excluded patterns: {', '.join(exclude_patterns) if exclude_patterns else 'None'}\n"
-            f"Add test files to run this test."
+            f"Add test files to inbox or archive to run this test."
         )
 
     latest = max(files, key=lambda p: p.stat().st_mtime)
-    print(f"\n[FIXTURE] Selected {asset_type} file: {latest.name}")
+    print(f"\n[FIXTURE] Selected {asset_type} file from {source_used}: {latest.name}")
     return latest
+
+
+def _get_archive_path(path_resolver: PathResolver, asset_subpath: str) -> Path:
+    """Get the archive path for an asset type.
+
+    Args:
+        path_resolver: PathResolver instance
+        asset_subpath: Relative path within inbox/archive (e.g., 'Mutual-Fund/CAMS')
+
+    Returns:
+        Archive path for the asset
+    """
+    return path_resolver.archive() / asset_subpath
+
+
+def get_asset_path(
+    path_resolver: PathResolver,
+    asset_subpath: str,
+    use_archive_fallback: Optional[bool] = None
+) -> Path:
+    """Get the best available path for an asset (inbox or archive).
+
+    This function checks inbox first, then falls back to archive if configured.
+
+    Args:
+        path_resolver: PathResolver instance
+        asset_subpath: Relative path within inbox/archive (e.g., 'Mutual-Fund/CAMS')
+        use_archive_fallback: Override global fallback setting (None uses config)
+
+    Returns:
+        Path to the asset directory (inbox or archive, whichever has files)
+
+    Raises:
+        pytest.skip if neither inbox nor archive exist or have files
+    """
+    inbox_path = path_resolver.inbox() / asset_subpath
+    archive_path = path_resolver.archive() / asset_subpath
+
+    # Determine if archive fallback should be used
+    if use_archive_fallback is None:
+        fallback_config = TEST_CONFIG.get("file_sources", {})
+        use_archive_fallback = fallback_config.get("fallback_to_archive", USE_ARCHIVE_FALLBACK)
+
+    # Check inbox first
+    if inbox_path.exists() and any(inbox_path.iterdir()):
+        return inbox_path
+
+    # Fallback to archive if enabled
+    if use_archive_fallback and archive_path.exists() and any(archive_path.iterdir()):
+        print(f"\n[PATH] Using archive for {asset_subpath} (inbox empty or missing)")
+        return archive_path
+
+    # Return inbox path even if empty (let the test decide what to do)
+    return inbox_path
+
+
+def find_files_in_path(
+    path_resolver: PathResolver,
+    asset_subpath: str,
+    extensions: List[str],
+    pattern: str = '*',
+    exclude_patterns: List[str] = None,
+    use_archive_fallback: Optional[bool] = None
+) -> List[Path]:
+    """Find files in inbox or archive for an asset type.
+
+    Args:
+        path_resolver: PathResolver instance
+        asset_subpath: Relative path within inbox/archive
+        extensions: List of file extensions to search for
+        pattern: Glob pattern to match (default: '*' for all files)
+        exclude_patterns: List of patterns to exclude from filename
+        use_archive_fallback: Override global fallback setting
+
+    Returns:
+        List of matching file paths
+    """
+    inbox_path = path_resolver.inbox() / asset_subpath
+    archive_path = path_resolver.archive() / asset_subpath
+
+    # Determine if archive fallback should be used
+    if use_archive_fallback is None:
+        fallback_config = TEST_CONFIG.get("file_sources", {})
+        use_archive_fallback = fallback_config.get("fallback_to_archive", USE_ARCHIVE_FALLBACK)
+
+    # Search inbox first
+    files = _search_directory_for_files(inbox_path, extensions, pattern, exclude_patterns)
+    source = "inbox"
+
+    # Fallback to archive if inbox is empty
+    if not files and use_archive_fallback:
+        files = _search_directory_for_files(archive_path, extensions, pattern, exclude_patterns)
+        if files:
+            source = "archive"
+            print(f"\n[FILES] Using {len(files)} file(s) from archive for {asset_subpath}")
+
+    return files
 
 
 @pytest.fixture
 def epf_file(path_resolver) -> Path:
-    """Latest EPF passbook PDF from inbox (excluding interest-only statements)."""
+    """Latest EPF passbook PDF from inbox/archive (excluding interest-only statements)."""
     inbox = path_resolver.inbox() / "EPF"
+    archive = _get_archive_path(path_resolver, "EPF")
     # Exclude interest-only statements - we want passbooks with full transaction details
     return _find_latest_file(
         inbox,
         ['.pdf'],
         "EPF",
         path_resolver.user_name,
-        exclude_patterns=['interest']  # Skip interest-only statements
+        exclude_patterns=['interest'],  # Skip interest-only statements
+        archive_path=archive
     )
 
 
 @pytest.fixture
 def mutual_fund_file(path_resolver) -> Path:
-    """Latest Mutual Fund transaction file from inbox (excluding holdings)."""
+    """Latest Mutual Fund transaction file from inbox/archive (excluding holdings)."""
     inbox = path_resolver.inbox() / "Mutual-Fund"
+    archive = _get_archive_path(path_resolver, "Mutual-Fund")
     # Exclude holdings files - we want transaction files
     return _find_latest_file(
         inbox,
         ['.pdf', '.xlsx', '.xls'],
         "Mutual-Fund",
         path_resolver.user_name,
-        exclude_patterns=['holding', 'holdings', 'consolidated']
+        exclude_patterns=['holding', 'holdings', 'consolidated'],
+        archive_path=archive
     )
 
 
 # Parser-specific MF fixtures
 @pytest.fixture
 def cams_file(path_resolver) -> Path:
-    """Latest CAMS transaction file from inbox."""
+    """Latest CAMS transaction file from inbox/archive."""
     inbox = path_resolver.inbox() / "Mutual-Fund" / "CAMS"
+    archive = _get_archive_path(path_resolver, "Mutual-Fund/CAMS")
     return _find_latest_file(
         inbox,
         ['.pdf', '.xlsx', '.xls'],
         "CAMS",
         path_resolver.user_name,
-        exclude_patterns=['holding', 'holdings']
+        exclude_patterns=['holding', 'holdings'],
+        archive_path=archive
     )
 
 
 @pytest.fixture
 def karvy_file(path_resolver) -> Path:
-    """Latest KARVY/KFintech transaction file from inbox."""
+    """Latest KARVY/KFintech transaction file from inbox/archive."""
     inbox = path_resolver.inbox() / "Mutual-Fund" / "KARVY"
+    archive = _get_archive_path(path_resolver, "Mutual-Fund/KARVY")
     return _find_latest_file(
         inbox,
         ['.pdf', '.xlsx', '.xls'],
         "KARVY",
         path_resolver.user_name,
-        exclude_patterns=['holding', 'holdings']
+        exclude_patterns=['holding', 'holdings'],
+        archive_path=archive
     )
 
 
 @pytest.fixture
 def bank_file(path_resolver) -> Path:
-    """Latest Bank statement from inbox."""
+    """Latest Bank statement from inbox/archive."""
     inbox = path_resolver.inbox() / "Bank"
-    return _find_latest_file(inbox, ['.pdf', '.xlsx', '.xls', '.csv'], "Bank", path_resolver.user_name)
+    archive = _get_archive_path(path_resolver, "Bank")
+    return _find_latest_file(
+        inbox,
+        ['.pdf', '.xlsx', '.xls', '.csv'],
+        "Bank",
+        path_resolver.user_name,
+        archive_path=archive
+    )
 
 
 @pytest.fixture
 def nps_file(path_resolver) -> Path:
-    """Latest NPS transaction file from inbox."""
+    """Latest NPS transaction file from inbox/archive."""
     inbox = path_resolver.inbox() / "NPS"
-    return _find_latest_file(inbox, ['.pdf', '.csv', '.xlsx'], "NPS", path_resolver.user_name)
+    archive = _get_archive_path(path_resolver, "NPS")
+    return _find_latest_file(
+        inbox,
+        ['.pdf', '.csv', '.xlsx'],
+        "NPS",
+        path_resolver.user_name,
+        archive_path=archive
+    )
 
 
 @pytest.fixture
 def ppf_file(path_resolver) -> Path:
-    """Latest PPF file from inbox."""
+    """Latest PPF file from inbox/archive."""
     inbox = path_resolver.inbox() / "PPF"
-    return _find_latest_file(inbox, ['.pdf', '.xlsx'], "PPF", path_resolver.user_name)
+    archive = _get_archive_path(path_resolver, "PPF")
+    return _find_latest_file(
+        inbox,
+        ['.pdf', '.xlsx'],
+        "PPF",
+        path_resolver.user_name,
+        archive_path=archive
+    )
 
 
 @pytest.fixture
 def stock_file(path_resolver) -> Path:
-    """Latest Indian Stock trading file from inbox (excluding holdings)."""
+    """Latest Indian Stock trading file from inbox/archive (excluding holdings)."""
     inbox = path_resolver.inbox() / "Indian-Stocks"
+    archive = _get_archive_path(path_resolver, "Indian-Stocks")
     # Exclude holdings files - we want trading/P&L files
     return _find_latest_file(
         inbox,
         ['.pdf', '.xlsx', '.csv'],
         "Indian-Stocks",
         path_resolver.user_name,
-        exclude_patterns=['holding', 'holdings', 'portfolio']
+        exclude_patterns=['holding', 'holdings', 'portfolio'],
+        archive_path=archive
     )
 
 
 # Parser-specific stock fixtures
 @pytest.fixture
 def zerodha_file(path_resolver) -> Path:
-    """Latest Zerodha Tax P&L file from inbox."""
+    """Latest Zerodha Tax P&L file from inbox/archive."""
     inbox = path_resolver.inbox() / "Indian-Stocks" / "Zerodha"
+    archive = _get_archive_path(path_resolver, "Indian-Stocks/Zerodha")
     # Look for taxpnl files specifically
     return _find_latest_file(
         inbox,
         ['.xlsx', '.csv'],
         "Zerodha",
         path_resolver.user_name,
-        pattern='taxpnl*'
+        pattern='*taxpnl*',
+        archive_path=archive
     )
 
 
 @pytest.fixture
 def icici_direct_file(path_resolver) -> Path:
-    """Latest ICICI Direct trading file from inbox."""
+    """Latest ICICI Direct trading file from inbox/archive."""
     inbox = path_resolver.inbox() / "Indian-Stocks" / "ICICIDirect"
+    archive = _get_archive_path(path_resolver, "Indian-Stocks/ICICIDirect")
     # Exclude holdings files
     return _find_latest_file(
         inbox,
         ['.csv', '.xlsx'],
         "ICICIDirect",
         path_resolver.user_name,
-        exclude_patterns=['holding', 'holdings', 'portfolio']
+        exclude_patterns=['holding', 'holdings', 'portfolio'],
+        archive_path=archive
     )
 
 
 @pytest.fixture
 def salary_file(path_resolver) -> Path:
-    """Latest Salary file from inbox."""
+    """Latest Salary file from inbox/archive."""
     inbox = path_resolver.inbox() / "Salary"
-    return _find_latest_file(inbox, ['.pdf', '.xlsx'], "Salary", path_resolver.user_name)
+    archive = _get_archive_path(path_resolver, "Salary")
+    return _find_latest_file(
+        inbox,
+        ['.pdf', '.xlsx'],
+        "Salary",
+        path_resolver.user_name,
+        archive_path=archive
+    )
 
 
 # Parameterized Fixtures

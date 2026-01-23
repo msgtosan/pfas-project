@@ -36,7 +36,7 @@ def test_icici_parser():
     parser = ICICIParser(conn, TEST_MASTER_KEY)
 
     # Test files
-    data_dir = Path("Data/Users/Sanjay/Bank/ICICI")
+    data_dir = Path("Data/Users/Sanjay/inbox/Bank/ICICI")
 
     if not data_dir.exists():
         print(f"\n❌ ERROR: Data directory not found: {data_dir}")
@@ -146,7 +146,7 @@ def test_with_sbi_parser():
     parser = SBIParser(conn, TEST_MASTER_KEY)
 
     # Test files
-    data_dir = Path("Data/Users/Sanjay/Bank/ICICI")
+    data_dir = Path("Data/Users/Sanjay/inbox/Bank/ICICI")
     files = list(data_dir.glob("*.xls"))
 
     if not files:

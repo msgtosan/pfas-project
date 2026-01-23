@@ -1,0 +1,29 @@
+{
+  "$schema": "pfas_test_config_v1",
+  "version": "1.0",
+  "description": "Configuration for PFAS integration tests",
+
+  "file_sources": {
+    "primary": "inbox",
+    "fallback_to_archive": true,
+    "archive_fallback_order": ["archive", "inbox"],
+    "_comment": "When fallback_to_archive is true, tests will look in archive if inbox is empty"
+  },
+
+  "test_data": {
+    "prefer_latest_files": true,
+    "exclude_failed_folder": true,
+    "exclude_patterns": ["~$*", "*.tmp", ".DS_Store"]
+  },
+
+  "skip_behavior": {
+    "skip_on_missing_files": true,
+    "skip_on_missing_folder": true,
+    "verbose_skip_messages": true
+  },
+
+  "users": {
+    "default": "Sanjay",
+    "_comment": "Override with PFAS_TEST_USER environment variable"
+  }
+}

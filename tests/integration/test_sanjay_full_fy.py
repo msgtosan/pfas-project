@@ -5,6 +5,11 @@ This test loads all actual data files and verifies:
 1. All parsers work correctly with real data
 2. Financial statement services can generate reports
 3. Data integrity is maintained across all asset classes
+
+Configuration:
+- Uses inbox first, falls back to archive if inbox is empty
+- Set PFAS_TEST_USE_ARCHIVE=false to disable archive fallback
+- Configure in config/test_config.json for project-wide settings
 """
 import pytest
 from pathlib import Path
@@ -13,6 +18,9 @@ from decimal import Decimal
 
 from pfas.core.database import DatabaseManager
 from pfas.core.accounts import setup_chart_of_accounts
+
+# Import helper functions from conftest
+from tests.integration.conftest import get_asset_path, find_files_in_path
 
 
 class TestSanjayFullFY2425:
@@ -50,17 +58,20 @@ class TestSanjayFullFY2425:
         """Verify data folder exists."""
         assert data_path.exists(), f"Data folder {data_path} not found"
 
-    def test_02_parse_mf_cams(self, db_connection, data_path):
-        """Parse CAMS mutual fund statement."""
+    def test_02_parse_mf_cams(self, db_connection, path_resolver):
+        """Parse CAMS mutual fund statement (from inbox or archive)."""
         from pfas.parsers.mf import CAMSParser
 
-        cams_path = data_path / "Mutual-Fund/CAMS"
-        if not cams_path.exists():
-            pytest.skip("CAMS folder not found")
+        # Find CAMS files in inbox, fallback to archive
+        cams_files = find_files_in_path(
+            path_resolver,
+            "Mutual-Fund/CAMS",
+            ['.xlsx', '.xls'],
+            exclude_patterns=['holding', 'holdings']
+        )
 
-        cams_files = list(cams_path.glob("*.xlsx"))
         if not cams_files:
-            pytest.skip("No CAMS Excel files found")
+            pytest.skip("No CAMS Excel files found in inbox or archive")
 
         parser = CAMSParser(db_connection)
         total_transactions = 0
@@ -81,17 +92,20 @@ class TestSanjayFullFY2425:
         if total_transactions == 0:
             pytest.skip("CAMS files did not parse - format may not be supported")
 
-    def test_03_parse_mf_karvy(self, db_connection, data_path):
-        """Parse Karvy/KFintech mutual fund statement."""
+    def test_03_parse_mf_karvy(self, db_connection, path_resolver):
+        """Parse Karvy/KFintech mutual fund statement (from inbox or archive)."""
         from pfas.parsers.mf import KarvyParser
 
-        karvy_path = data_path / "Mutual-Fund/KARVY"
-        if not karvy_path.exists():
-            pytest.skip("Karvy folder not found")
+        # Find Karvy files in inbox, fallback to archive
+        karvy_files = find_files_in_path(
+            path_resolver,
+            "Mutual-Fund/KARVY",
+            ['.xlsx', '.xls'],
+            exclude_patterns=['holding', 'holdings']
+        )
 
-        karvy_files = list(karvy_path.glob("*.xlsx"))
         if not karvy_files:
-            pytest.skip("No Karvy Excel files found")
+            pytest.skip("No Karvy Excel files found in inbox or archive")
 
         parser = KarvyParser(db_connection)
         total_transactions = 0
@@ -108,17 +122,20 @@ class TestSanjayFullFY2425:
 
         print(f"Total Karvy transactions: {total_transactions}")
 
-    def test_04_parse_zerodha_stocks(self, db_connection, data_path):
-        """Parse Zerodha stock trades."""
+    def test_04_parse_zerodha_stocks(self, db_connection, path_resolver):
+        """Parse Zerodha stock trades (from inbox or archive)."""
         from pfas.parsers.stock import ZerodhaParser
 
-        zerodha_path = data_path / "Indian-Stocks/Zerodha"
-        if not zerodha_path.exists():
-            pytest.skip("Zerodha folder not found")
+        # Find Zerodha taxpnl files in inbox, fallback to archive
+        pnl_files = find_files_in_path(
+            path_resolver,
+            "Indian-Stocks/Zerodha",
+            ['.xlsx', '.csv'],
+            pattern='*taxpnl*'
+        )
 
-        pnl_files = list(zerodha_path.glob("taxpnl*.xlsx"))
         if not pnl_files:
-            pytest.skip("No Zerodha Tax P&L files found")
+            pytest.skip("No Zerodha Tax P&L files found in inbox or archive")
 
         parser = ZerodhaParser(db_connection)
         total_trades = 0
@@ -133,17 +150,20 @@ class TestSanjayFullFY2425:
         assert total_trades > 0, "No trades parsed from Zerodha"
         print(f"Total Zerodha trades: {total_trades}")
 
-    def test_05_parse_icici_stocks(self, db_connection, data_path):
-        """Parse ICICI Direct stock trades."""
+    def test_05_parse_icici_stocks(self, db_connection, path_resolver):
+        """Parse ICICI Direct stock trades (from inbox or archive)."""
         from pfas.parsers.stock import ICICIDirectParser
 
-        icici_path = data_path / "Indian-Stocks/ICICIDirect"
-        if not icici_path.exists():
-            pytest.skip("ICICI Direct folder not found")
+        # Find ICICI Direct files in inbox, fallback to archive
+        csv_files = find_files_in_path(
+            path_resolver,
+            "Indian-Stocks/ICICIDirect",
+            ['.csv', '.xlsx'],
+            exclude_patterns=['holding', 'holdings', 'portfolio']
+        )
 
-        csv_files = list(icici_path.glob("*.csv"))
         if not csv_files:
-            pytest.skip("No ICICI Direct CSV files found")
+            pytest.skip("No ICICI Direct files found in inbox or archive")
 
         parser = ICICIDirectParser(db_connection)
         total_trades = 0
@@ -157,17 +177,19 @@ class TestSanjayFullFY2425:
 
         print(f"Total ICICI Direct trades: {total_trades}")
 
-    def test_06_parse_nps(self, db_connection, data_path):
-        """Parse NPS statement."""
+    def test_06_parse_nps(self, db_connection, path_resolver):
+        """Parse NPS statement (from inbox or archive)."""
         from pfas.parsers.nps import NPSParser
 
-        nps_path = data_path / "NPS"
-        if not nps_path.exists():
-            pytest.skip("NPS folder not found")
+        # Find NPS files in inbox, fallback to archive
+        csv_files = find_files_in_path(
+            path_resolver,
+            "NPS",
+            ['.csv', '.pdf', '.xlsx']
+        )
 
-        csv_files = list(nps_path.glob("*.csv"))
         if not csv_files:
-            pytest.skip("No NPS CSV files found")
+            pytest.skip("No NPS files found in inbox or archive")
 
         parser = NPSParser(db_connection)
 
@@ -181,17 +203,19 @@ class TestSanjayFullFY2425:
                 print(f"  Tier I: {tier1_total:,.2f}")
                 print(f"  Tier II: {tier2_total:,.2f}")
 
-    def test_07_parse_ppf(self, db_connection, data_path):
-        """Parse PPF statement."""
+    def test_07_parse_ppf(self, db_connection, path_resolver):
+        """Parse PPF statement (from inbox or archive)."""
         from pfas.parsers.ppf import PPFParser
 
-        ppf_path = data_path / "PPF"
-        if not ppf_path.exists():
-            pytest.skip("PPF folder not found")
+        # Find PPF files in inbox, fallback to archive
+        xlsx_files = find_files_in_path(
+            path_resolver,
+            "PPF",
+            ['.xlsx', '.pdf']
+        )
 
-        xlsx_files = list(ppf_path.glob("*.xlsx"))
         if not xlsx_files:
-            pytest.skip("No PPF Excel files found")
+            pytest.skip("No PPF files found in inbox or archive")
 
         parser = PPFParser(db_connection)
 
@@ -203,17 +227,20 @@ class TestSanjayFullFY2425:
                 deposits = sum(t.amount for t in result.transactions if t.transaction_type == "DEPOSIT")
                 print(f"  Total Deposits (80C eligible): {deposits:,.2f}")
 
-    def test_08_parse_epf(self, db_connection, data_path):
-        """Parse EPF passbook."""
+    def test_08_parse_epf(self, db_connection, path_resolver):
+        """Parse EPF passbook (from inbox or archive)."""
         from pfas.parsers.epf import EPFParser
 
-        epf_path = data_path / "EPF"
-        if not epf_path.exists():
-            pytest.skip("EPF folder not found")
+        # Find EPF files in inbox, fallback to archive
+        pdf_files = find_files_in_path(
+            path_resolver,
+            "EPF",
+            ['.pdf'],
+            exclude_patterns=['interest']  # Skip interest-only statements
+        )
 
-        pdf_files = list(epf_path.glob("*.pdf"))
         if not pdf_files:
-            pytest.skip("No EPF PDF files found")
+            pytest.skip("No EPF PDF files found in inbox or archive")
 
         parser = EPFParser(db_connection)
 
@@ -222,8 +249,10 @@ class TestSanjayFullFY2425:
             if result.success:
                 num_txns = len(result.transactions)
                 print(f"EPF {pdf_file.name}: {num_txns} transactions")
-                if result.account:
-                    total_balance = result.account.employee_balance + result.account.employer_balance
+                # Get closing balance from last transaction (balances are on transactions, not account)
+                if result.transactions:
+                    last_txn = result.transactions[-1]
+                    total_balance = last_txn.employee_balance + last_txn.employer_balance
                     print(f"  Closing Balance: {total_balance:,.2f}")
 
     def test_09_generate_balance_sheet(self, db_connection):
@@ -347,16 +376,18 @@ class TestMFCapitalGains:
         DatabaseManager.reset_instance()
 
     def test_01_mf_capital_gains_calculation(self, db_connection, path_resolver):
-        """Calculate MF capital gains for FY24-25."""
+        """Calculate MF capital gains for FY24-25 (from inbox or archive)."""
         from pfas.parsers.mf import CAMSParser, CapitalGainsCalculator
 
-        mf_path = path_resolver.user_dir / "Mutual-Fund/CAMS"
-        if not mf_path.exists():
-            pytest.skip("CAMS folder not found")
+        # Find CAMS files in inbox, fallback to archive
+        cams_files = find_files_in_path(
+            path_resolver,
+            "Mutual-Fund/CAMS",
+            ['.xlsx', '.xls']
+        )
 
-        cams_files = list(mf_path.glob("*.xlsx"))
         if not cams_files:
-            pytest.skip("No CAMS files found")
+            pytest.skip("No CAMS files found in inbox or archive")
 
         parser = CAMSParser(db_connection)
         for cams_file in cams_files:
@@ -399,16 +430,19 @@ class TestStockCapitalGains:
         DatabaseManager.reset_instance()
 
     def test_01_stock_capital_gains_zerodha(self, db_connection, path_resolver):
-        """Calculate stock capital gains from Zerodha."""
+        """Calculate stock capital gains from Zerodha (from inbox or archive)."""
         from pfas.parsers.stock import ZerodhaParser
 
-        zerodha_path = path_resolver.user_dir / "Indian-Stocks/Zerodha"
-        if not zerodha_path.exists():
-            pytest.skip("Zerodha folder not found")
+        # Find Zerodha taxpnl files in inbox, fallback to archive
+        pnl_files = find_files_in_path(
+            path_resolver,
+            "Indian-Stocks/Zerodha",
+            ['.xlsx', '.csv'],
+            pattern='*taxpnl*'
+        )
 
-        pnl_files = list(zerodha_path.glob("taxpnl*.xlsx"))
         if not pnl_files:
-            pytest.skip("No Zerodha files found")
+            pytest.skip("No Zerodha files found in inbox or archive")
 
         parser = ZerodhaParser(db_connection)
 

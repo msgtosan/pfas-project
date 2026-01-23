@@ -1,9 +1,9 @@
 {
-  "_comment": "All paths are relative to the data root passed to PathResolver",
-  "users_base": "Users",
+  "_comment": "All paths are relative to the project root (PFAS_ROOT)",
+  "users_base": "Data/Users",
   "global": {
-    "config_dir": "config",
-    "shared_masters": "shared/masters"
+    "config_dir": "Data/config",
+    "shared_masters": "Data/shared/masters"
   },
   "per_user": {
     "db_file": "db/finance.db",

@@ -156,6 +156,11 @@ class BankIntelligenceAnalyzer:
         """
         Recursively scan Data/Users directory and ingest all bank statements.
 
+        Supports two directory structures:
+        1. Legacy: Data/Users/{user}/Bank/{bank_name}/
+        2. New: Data/Users/{user}/inbox/Bank/{bank_name}/ and
+                Data/Users/{user}/archive/Bank/{bank_name}/
+
         Returns:
             IngestionResult with summary of all ingestions
         """
@@ -175,33 +180,83 @@ class BankIntelligenceAnalyzer:
                 continue
 
             user_name = user_dir.name
-            bank_dir = user_dir / "Bank"
 
-            if not bank_dir.exists():
-                continue
+            # Find all bank directories (supports both legacy and new structure)
+            bank_dirs_to_scan = []
 
-            # Scan for banks
-            for bank_subdir in bank_dir.iterdir():
-                if not bank_subdir.is_dir():
-                    continue
+            # New structure: inbox/Bank and archive/Bank
+            for subdir in ["inbox", "archive"]:
+                bank_base = user_dir / subdir / "Bank"
+                if bank_base.exists():
+                    bank_dirs_to_scan.append(bank_base)
 
-                bank_name = bank_subdir.name
-                bank_result = self._ingest_bank_directory(
-                    bank_subdir, user_name, bank_name
-                )
+            # Legacy structure: direct Bank folder
+            legacy_bank = user_dir / "Bank"
+            if legacy_bank.exists() and legacy_bank not in bank_dirs_to_scan:
+                # Only add if it's not a symlink to inbox/archive
+                if not any(legacy_bank.resolve() == bd.resolve() for bd in bank_dirs_to_scan):
+                    bank_dirs_to_scan.append(legacy_bank)
 
-                # Aggregate results
-                result.transactions_processed += bank_result.transactions_processed
-                result.transactions_inserted += bank_result.transactions_inserted
-                result.transactions_skipped += bank_result.transactions_skipped
-                result.errors.extend(bank_result.errors)
-                result.warnings.extend(bank_result.warnings)
-                result.source_files.extend(bank_result.source_files)
+            # Scan all found bank directories
+            for bank_dir in bank_dirs_to_scan:
+                for bank_subdir in bank_dir.iterdir():
+                    if not bank_subdir.is_dir():
+                        continue
 
-                if not bank_result.success:
-                    result.success = False
+                    bank_name = bank_subdir.name
+                    bank_result = self._ingest_bank_directory(
+                        bank_subdir, user_name, bank_name
+                    )
+
+                    # Aggregate results
+                    result.transactions_processed += bank_result.transactions_processed
+                    result.transactions_inserted += bank_result.transactions_inserted
+                    result.transactions_skipped += bank_result.transactions_skipped
+                    result.errors.extend(bank_result.errors)
+                    result.warnings.extend(bank_result.warnings)
+                    result.source_files.extend(bank_result.source_files)
+
+                    if not bank_result.success:
+                        result.success = False
 
         return result
+
+    def _find_bank_config(
+        self, bank_dir: Path, user_name: str, bank_name: str
+    ) -> Optional[Path]:
+        """
+        Find bank config file in multiple locations.
+
+        Search order:
+        1. bank_dir/user_bank_config.json (alongside statements)
+        2. user_dir/config/user_bank_config.json (user config dir)
+        3. user_dir/config/{bank_name.lower()}_bank_config.json
+
+        Returns:
+            Path to config file if found, None otherwise
+        """
+        # Derive user directory from bank_dir
+        # bank_dir is like: Data/Users/{user}/inbox/Bank/{bank} or Data/Users/{user}/Bank/{bank}
+        parts = bank_dir.parts
+        try:
+            # Find 'Bank' in path and get user_dir
+            bank_idx = parts.index('Bank')
+            user_dir = Path(*parts[:bank_idx - 1]) if parts[bank_idx - 1] in ('inbox', 'archive') else Path(*parts[:bank_idx])
+        except (ValueError, IndexError):
+            user_dir = bank_dir.parent.parent
+
+        # Search locations
+        candidates = [
+            bank_dir / "user_bank_config.json",
+            user_dir / "config" / "user_bank_config.json",
+            user_dir / "config" / f"{bank_name.lower()}_bank_config.json",
+        ]
+
+        for candidate in candidates:
+            if candidate.exists():
+                return candidate
+
+        return None
 
     def _ingest_bank_directory(
         self, bank_dir: Path, user_name: str, bank_name: str
@@ -220,18 +275,19 @@ class BankIntelligenceAnalyzer:
         result = IngestionResult(success=True)
 
         # Load or create config
-        config_path = bank_dir / "user_bank_config.json"
-        if config_path.exists():
+        config_path = self._find_bank_config(bank_dir, user_name, bank_name)
+        if config_path:
             try:
                 config = UserBankConfig.from_json(str(config_path))
             except Exception as e:
-                result.add_warning(f"Failed to load config: {e}, using defaults")
+                result.add_warning(f"Failed to load config from {config_path}: {e}, using defaults")
                 config = UserBankConfig.default_for_bank(user_name, bank_name)
         else:
             config = UserBankConfig.default_for_bank(user_name, bank_name)
-            # Optionally create default config
+            # Optionally create default config in bank directory
+            default_config_path = bank_dir / "user_bank_config.json"
             try:
-                config.to_json(str(config_path))
+                config.to_json(str(default_config_path))
             except Exception:
                 pass  # Ignore if we can't write config
 

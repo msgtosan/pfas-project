@@ -1,5 +1,5 @@
 """
-Integration tests for Bank Intelligence Suite using Sanjay's real bank data.
+Integration tests for Bank Intelligence Suite.
 
 Tests:
 1. Intelligent Analyzer - Statement ingestion with fuzzy header detection
@@ -7,8 +7,22 @@ Tests:
 3. Integrity Auditing - Data validation and statistics
 4. PFAS Asset Extraction - Income categorization for asset updates
 
-Data Source: Data/Users/Sanjay/Bank/ICICI/*.xls
-Config: Data/Users/Sanjay/Bank/ICICI/user_bank_config.json
+Data Source: Data/Users/{user}/inbox/Bank/{bank}/*.xls (or archive/ fallback)
+Config: Data/Users/{user}/config/user_bank_config.json
+
+Configuration:
+    - Default user: Sanjay (set PFAS_TEST_USER to override)
+    - Default bank: ICICI (set PFAS_TEST_BANK to override)
+
+Usage:
+    # Run with default user (Sanjay)
+    pytest tests/integration/test_bank_intelligence/ -v
+
+    # Run for a different user
+    PFAS_TEST_USER=Priya pytest tests/integration/test_bank_intelligence/ -v
+
+    # Run for a different user and bank
+    PFAS_TEST_USER=Priya PFAS_TEST_BANK=HDFC pytest tests/integration/test_bank_intelligence/ -v
 """
 
 import os
@@ -17,6 +31,7 @@ import pytest
 from pathlib import Path
 from decimal import Decimal
 from datetime import date
+from typing import Optional
 
 # Add project root to path
 project_root = Path(__file__).parent.parent.parent.parent
@@ -35,10 +50,66 @@ from src.pfas.services.bank_intelligence.models import (
     IngestionResult,
 )
 
+# Import helper functions from conftest for inbox/archive fallback
+from tests.integration.conftest import find_files_in_path, get_asset_path
 
-# Test Configuration (using path_resolver)
-SANJAY_BANK = "ICICI"
+
+# Test Configuration - Configurable via environment variables
+# Default user is Sanjay, override with PFAS_TEST_USER
+# Default bank is ICICI, override with PFAS_TEST_BANK
+DEFAULT_BANK = "ICICI"
+TEST_BANK = os.getenv("PFAS_TEST_BANK", DEFAULT_BANK)
 EXPECTED_FISCAL_YEARS = ["FY 2024-25", "FY 2025-26"]
+
+
+def find_bank_config(path_resolver, bank_name: str) -> Optional[Path]:
+    """Find bank config file in user config dir or alongside bank files.
+
+    Search order:
+    1. user_config_dir/user_bank_config.json
+    2. user_config_dir/{bank_name.lower()}_bank_config.json
+    3. inbox/Bank/{bank_name}/user_bank_config.json
+    4. archive/Bank/{bank_name}/user_bank_config.json
+
+    Returns:
+        Path to config file if found, None otherwise
+    """
+    # Check user config directory first
+    config_dir = path_resolver.user_config_dir()
+
+    candidates = [
+        config_dir / "user_bank_config.json",
+        config_dir / f"{bank_name.lower()}_bank_config.json",
+        path_resolver.inbox() / "Bank" / bank_name / "user_bank_config.json",
+        path_resolver.archive() / "Bank" / bank_name / "user_bank_config.json",
+    ]
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+
+    return None
+
+
+def find_bank_directory(path_resolver, bank_name: str) -> Optional[Path]:
+    """Find bank directory in inbox or archive.
+
+    Returns:
+        Path to bank directory with files, None if not found
+    """
+    inbox_path = path_resolver.inbox() / "Bank" / bank_name
+    archive_path = path_resolver.archive() / "Bank" / bank_name
+
+    # Check inbox first
+    if inbox_path.exists() and any(inbox_path.glob("*.xls*")):
+        return inbox_path
+
+    # Fallback to archive
+    if archive_path.exists() and any(archive_path.glob("*.xls*")):
+        print(f"\n[PATH] Using archive for Bank/{bank_name} (inbox empty)")
+        return archive_path
+
+    return None
 
 
 class TestBankIntelligenceIntegration:
@@ -46,69 +117,75 @@ class TestBankIntelligenceIntegration:
 
     @pytest.fixture(scope="class")
     def test_db_path(self, path_resolver, tmp_path_factory):
-        """Get test database path."""
+        """Get test database path (persists across all tests in this class)."""
         test_db_dir = tmp_path_factory.mktemp("bank_intelligence")
-        return test_db_dir / "test_money_movement.db"
+        db_path = test_db_dir / "test_money_movement.db"
+
+        # Clean up any existing database at the start of the test class
+        if db_path.exists():
+            os.remove(db_path)
+
+        yield db_path
+
+        # Optional: Clean up after all tests complete
+        # if db_path.exists():
+        #     os.remove(db_path)
 
     @pytest.fixture(scope="class")
     def test_report_path(self, path_resolver, tmp_path_factory):
-        """Get test report path."""
-        test_report_dir = tmp_path_factory.mktemp("bank_intelligence")
+        """Get test report path (persists across all tests in this class)."""
+        test_report_dir = tmp_path_factory.mktemp("bank_reports")
         return test_report_dir / "Test_Master_Report.xlsx"
-
-    @pytest.fixture(autouse=True)
-    def setup_and_teardown(self, test_db_path):
-        """Setup test environment and cleanup after tests."""
-        # Remove test database if exists
-        if test_db_path.exists():
-            os.remove(test_db_path)
-
-        yield
-
-        # Cleanup is optional - keep test artifacts for inspection
-        # if test_db_path.exists():
-        #     os.remove(test_db_path)
 
     def test_01_config_loading(self, path_resolver):
         """Test: Load user_bank_config.json for ICICI account."""
-        config_path = path_resolver.user_dir / "Bank" / SANJAY_BANK / "user_bank_config.json"
+        config_path = find_bank_config(path_resolver, TEST_BANK)
 
-        if not config_path.exists():
-            pytest.skip(f"Config file not found: {config_path}")
+        if not config_path:
+            pytest.skip(
+                f"Config file not found. Searched:\n"
+                f"  - {path_resolver.user_config_dir()}/user_bank_config.json\n"
+                f"  - {path_resolver.inbox()}/Bank/{TEST_BANK}/user_bank_config.json"
+            )
 
         assert config_path.exists(), f"Config file not found: {config_path}"
 
         config = UserBankConfig.from_json(str(config_path))
 
         assert config.user_name == path_resolver.user_name
-        assert config.bank_name == SANJAY_BANK
+        assert config.bank_name == TEST_BANK
         assert config.account_type == "SAVINGS"
         assert len(config.category_overrides) > 0
 
-        print(f"\n[PASS] Config loaded with {len(config.category_overrides)} category overrides")
+        print(f"\n[PASS] Config loaded from: {config_path}")
+        print(f"  - Category overrides: {len(config.category_overrides)}")
 
     def test_02_statement_files_exist(self, path_resolver):
-        """Test: Verify bank statement files exist."""
-        bank_dir = path_resolver.user_dir / "Bank" / SANJAY_BANK
+        """Test: Verify bank statement files exist in inbox or archive."""
+        bank_dir = find_bank_directory(path_resolver, TEST_BANK)
 
-        if not bank_dir.exists():
-            pytest.skip(f"Bank directory not found: {bank_dir}")
+        if not bank_dir:
+            pytest.skip(
+                f"Bank directory not found. Searched:\n"
+                f"  - {path_resolver.inbox()}/Bank/{TEST_BANK}\n"
+                f"  - {path_resolver.archive()}/Bank/{TEST_BANK}"
+            )
 
         assert bank_dir.exists(), f"Bank directory not found: {bank_dir}"
 
         xls_files = list(bank_dir.glob("*.xls")) + list(bank_dir.glob("*.xlsx"))
         assert len(xls_files) >= 1, "No Excel statement files found"
 
-        print(f"\n[PASS] Found {len(xls_files)} statement files:")
+        print(f"\n[PASS] Found {len(xls_files)} statement files in {bank_dir.parent.name}/{bank_dir.name}:")
         for f in xls_files:
             print(f"  - {f.name}")
 
     def test_03_category_classifier(self, path_resolver):
         """Test: Category classifier with custom overrides."""
-        config_path = path_resolver.user_dir / "Bank" / SANJAY_BANK / "user_bank_config.json"
+        config_path = find_bank_config(path_resolver, TEST_BANK)
 
-        if not config_path.exists():
-            pytest.skip(f"Config file not found: {config_path}")
+        if not config_path:
+            pytest.skip(f"Config file not found for {TEST_BANK}")
         config = UserBankConfig.from_json(str(config_path))
 
         classifier = CategoryClassifier(config.category_overrides)
@@ -138,9 +215,11 @@ class TestBankIntelligenceIntegration:
 
     def test_04_intelligent_ingestion(self, path_resolver, test_db_path):
         """Test: Ingest bank statements with intelligent analyzer."""
-        if not (path_resolver.user_dir / "Bank" / SANJAY_BANK).exists():
-            pytest.skip("Bank directory not found")
+        bank_dir = find_bank_directory(path_resolver, TEST_BANK)
+        if not bank_dir:
+            pytest.skip(f"Bank directory not found for {TEST_BANK}")
 
+        # Pass the user directory parent (Data/Users) for scanning
         with BankIntelligenceAnalyzer(str(test_db_path), str(path_resolver.user_dir.parent)) as analyzer:
             result = analyzer.scan_and_ingest_all()
 
@@ -178,7 +257,7 @@ class TestBankIntelligenceIntegration:
 
         assert stats["total_transactions"] > 0
         assert path_resolver.user_name in stats["by_user"]
-        assert SANJAY_BANK in stats["by_bank"]
+        assert TEST_BANK in stats["by_bank"]
         assert len(stats["by_fiscal_year"]) > 0
         assert len(stats["by_category"]) > 0
 
@@ -267,8 +346,9 @@ class TestBankIntelligenceIntegration:
         if not test_db_path.exists():
             pytest.skip("Database not created - run test_04 first")
 
-        if not (path_resolver.user_dir / "Bank" / SANJAY_BANK).exists():
-            pytest.skip("Bank directory not found")
+        bank_dir = find_bank_directory(path_resolver, TEST_BANK)
+        if not bank_dir:
+            pytest.skip(f"Bank directory not found for {TEST_BANK}")
 
         # Get current count
         with DatabaseAuditor(str(test_db_path)) as auditor:

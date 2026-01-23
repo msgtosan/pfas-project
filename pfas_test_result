@@ -1,0 +1,222 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-9.0.2, pluggy-1.6.0
+rootdir: /home/sshankar/projects/pfas-project
+configfile: pytest.ini (WARNING: ignoring pytest config in pyproject.toml!)
+testpaths: tests
+plugins: asyncio-1.3.0, cov-7.0.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 932 items
+
+tests/integration/test_audit_triggers.py .........                       [  0%]
+tests/integration/test_bank_intelligence/test_sanjay_integration.py ssss [  1%]
+ssssssss                                                                 [  2%]
+tests/integration/test_epf_integration.py sssssss                        [  3%]
+tests/integration/test_mf_cams_integration.py sss                        [  3%]
+tests/integration/test_nps_integration.py sssss                          [  3%]
+tests/integration/test_ppf_integration.py sssss                          [  4%]
+tests/integration/test_sanjay_full_fy.py ssssssssss                      [  5%]
+tests/integration/test_stock_integration.py ssss                         [  5%]
+tests/integration/test_full_fy.py FFF.FFF                                [  6%]
+tests/integration/test_sanjay_full_fy.py ....                            [  7%]
+tests/integration/test_thread_safety.py ........                         [  7%]
+tests/manual/test_icici_excel_real.py .                                  [  8%]
+tests/manual/test_icici_real_data.py ..                                  [  8%]
+tests/regression/test_sanjay_regression.py .................             [ 10%]
+tests/unit/test_analyzers/test_mf_analyzer.py .......................    [ 12%]
+tests/unit/test_analyzers/test_mf_enhanced.py .............F....         [ 14%]
+tests/unit/test_core/test_accounts.py ................                   [ 16%]
+tests/unit/test_core/test_audit.py ..................                    [ 18%]
+tests/unit/test_core/test_currency.py ...................                [ 20%]
+tests/unit/test_core/test_database.py ..........                         [ 21%]
+tests/unit/test_core/test_encryption.py ....................             [ 23%]
+tests/unit/test_core/test_journal.py ..............                      [ 24%]
+tests/unit/test_core/test_session.py ..........................          [ 27%]
+tests/unit/test_parsers/test_assets/test_assets.py ..................... [ 29%]
+.                                                                        [ 30%]
+tests/unit/test_parsers/test_bank/test_models.py ...................     [ 32%]
+tests/unit/test_parsers/test_bank/test_parsers_simple.py .............   [ 33%]
+tests/unit/test_parsers/test_bank/test_utils.py ...................      [ 35%]
+tests/unit/test_parsers/test_epf/test_epf.py ..........                  [ 36%]
+tests/unit/test_parsers/test_foreign/test_morgan_stanley.py ............ [ 37%]
+...............                                                          [ 39%]
+tests/unit/test_parsers/test_mf/test_cams.py .................           [ 41%]
+tests/unit/test_parsers/test_mf/test_capital_gains.py .............      [ 42%]
+tests/unit/test_parsers/test_mf/test_classifier.py ..................... [ 44%]
+.........                                                                [ 45%]
+tests/unit/test_parsers/test_mf/test_karvy.py .......................... [ 48%]
+                                                                         [ 48%]
+tests/unit/test_parsers/test_mf/test_models.py ...............           [ 50%]
+tests/unit/test_parsers/test_mf/test_phase1_fixes.py ................... [ 52%]
+.........                                                                [ 53%]
+tests/unit/test_parsers/test_nps/test_nps.py ..........                  [ 54%]
+tests/unit/test_parsers/test_ppf/test_ppf.py ...........                 [ 55%]
+tests/unit/test_parsers/test_salary/test_form16.py ..............        [ 57%]
+tests/unit/test_parsers/test_salary/test_hra.py ....................     [ 59%]
+tests/unit/test_parsers/test_salary/test_payslip.py .................... [ 61%]
+                                                                         [ 61%]
+tests/unit/test_parsers/test_salary/test_rsu_correlation.py ............ [ 62%]
+                                                                         [ 62%]
+tests/unit/test_parsers/test_stock/test_icici.py ......................  [ 65%]
+tests/unit/test_parsers/test_stock/test_models.py .............          [ 66%]
+tests/unit/test_parsers/test_stock/test_zerodha.py .................     [ 68%]
+tests/unit/test_phase1/test_archiver.py ............                     [ 69%]
+tests/unit/test_phase1/test_mf_ingester.py ..........                    [ 70%]
+tests/unit/test_phase1/test_mf_scanner.py ............                   [ 71%]
+tests/unit/test_phase1/test_parser_fragility.py ...............          [ 73%]
+tests/unit/test_phase1/test_path_resolver.py ...................         [ 75%]
+tests/unit/test_phase1/test_reconciler.py ..............                 [ 77%]
+tests/unit/test_phase1/test_reports.py .........                         [ 78%]
+tests/unit/test_reports/test_mf_capital_gains_report.py ................ [ 79%]
+......                                                                   [ 80%]
+tests/unit/test_reports/test_stock_holdings_report.py .............      [ 81%]
+tests/unit/test_services/test_currency/test_rate_provider.py ........... [ 82%]
+........                                                                 [ 83%]
+tests/unit/test_services/test_encrypted_file_handler.py ..............ss [ 85%]
+..                                                                       [ 85%]
+tests/unit/test_services/test_financial_statements.py .................. [ 87%]
+..............                                                           [ 89%]
+tests/unit/test_services/test_foreign/test_dtaa_calculator.py .......... [ 90%]
+........                                                                 [ 91%]
+tests/unit/test_services/test_foreign/test_espp_processor.py ........... [ 92%]
+............                                                             [ 93%]
+tests/unit/test_services/test_foreign/test_rsu_processor.py ............ [ 94%]
+....                                                                     [ 95%]
+tests/unit/test_services/test_itr/test_itr2_exporter.py ................ [ 96%]
+...............                                                          [ 98%]
+tests/unit/test_services/test_itr/test_schedule_fa.py .............      [100%]
+
+=================================== FAILURES ===================================
+_________________ TestFullFY2425.test_01_load_bank_statements __________________
+tests/integration/test_full_fy.py:22: in test_01_load_bank_statements
+    from pfas.parsers.bank import parse_all_statements
+E   ImportError: cannot import name 'parse_all_statements' from 'pfas.parsers.bank' (/home/sshankar/projects/pfas-project/src/pfas/parsers/bank/__init__.py)
+__________________ TestFullFY2425.test_02_load_mf_statements ___________________
+tests/integration/test_full_fy.py:32: in test_02_load_mf_statements
+    from pfas.parsers.mf import parse_cams, parse_karvy
+E   ImportError: cannot import name 'parse_cams' from 'pfas.parsers.mf' (/home/sshankar/projects/pfas-project/src/pfas/parsers/mf/__init__.py)
+__________________ TestFullFY2425.test_03_load_salary_form16 ___________________
+tests/integration/test_full_fy.py:41: in test_03_load_salary_form16
+    from pfas.parsers.salary import parse_form16
+E   ImportError: cannot import name 'parse_form16' from 'pfas.parsers.salary' (/home/sshankar/projects/pfas-project/src/pfas/parsers/salary/__init__.py)
+__________________ TestFullFY2425.test_05_tds_reconciliation ___________________
+tests/integration/test_full_fy.py:64: in test_05_tds_reconciliation
+    from pfas.services.tds_reconciliation import reconcile
+E   ModuleNotFoundError: No module named 'pfas.services.tds_reconciliation'
+_______________ TestFullFY2425.test_06_generate_tax_computation ________________
+tests/integration/test_full_fy.py:71: in test_06_generate_tax_computation
+    from pfas.reports.tax_computation import compute_tax
+E   ModuleNotFoundError: No module named 'pfas.reports.tax_computation'
+___________________ TestFullFY2425.test_07_itr2_json_export ____________________
+tests/integration/test_full_fy.py:81: in test_07_itr2_json_export
+    from pfas.services.itr_export import export_itr2
+E   ImportError: cannot import name 'export_itr2' from 'pfas.services.itr_export' (unknown location)
+_______________ TestMFReconciler.test_save_reconciliation_result _______________
+tests/unit/test_analyzers/test_mf_enhanced.py:525: in test_save_reconciliation_result
+    recon_id = reconciler.save_result(result)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/pfas/analyzers/mf_reconciler.py:406: in save_result
+    cursor = self.conn.execute("""
+E   sqlite3.OperationalError: no such column: updated_at
+=========================== short test summary info ============================
+SKIPPED [1] tests/integration/test_bank_intelligence/test_sanjay_integration.py:72: User directory not found: /home/sshankar/projects/pfas-project/Users/Sanjay
+Create it or set PFAS_TEST_USER to an existing user
+SKIPPED [1] tests/integration/test_bank_intelligence/test_sanjay_integration.py:90: User directory not found: /home/sshankar/projects/pfas-project/Users/Sanjay
+Create it or set PFAS_TEST_USER to an existing user
+SKIPPED [1] tests/integration/test_bank_intelligence/test_sanjay_integration.py:106: User directory not found: /home/sshankar/projects/pfas-project/Users/Sanjay
+Create it or set PFAS_TEST_USER to an existing user
+SKIPPED [1] tests/integration/test_bank_intelligence/test_sanjay_integration.py:139: User directory not found: /home/sshankar/projects/pfas-project/Users/Sanjay
+Create it or set PFAS_TEST_USER to an existing user
+SKIPPED [1] tests/integration/test_bank_intelligence/test_sanjay_integration.py:158: User directory not found: /home/sshankar/projects/pfas-project/Users/Sanjay
+Create it or set PFAS_TEST_USER to an existing user
+SKIPPED [1] tests/integration/test_bank_intelligence/test_sanjay_integration.py:171: User directory not found: /home/sshankar/projects/pfas-project/Users/Sanjay
+Create it or set PFAS_TEST_USER to an existing user
+SKIPPED [1] tests/integration/test_bank_intelligence/test_sanjay_integration.py:190: User directory not found: /home/sshankar/projects/pfas-project/Users/Sanjay
+Create it or set PFAS_TEST_USER to an existing user
+SKIPPED [1] tests/integration/test_bank_intelligence/test_sanjay_integration.py:208: User directory not found: /home/sshankar/projects/pfas-project/Users/Sanjay
+Create it or set PFAS_TEST_USER to an existing user
+SKIPPED [1] tests/integration/test_bank_intelligence/test_sanjay_integration.py:230: User directory not found: /home/sshankar/projects/pfas-project/Users/Sanjay
+Create it or set PFAS_TEST_USER to an existing user
+SKIPPED [1] tests/integration/test_bank_intelligence/test_sanjay_integration.py:244: User directory not found: /home/sshankar/projects/pfas-project/Users/Sanjay
+Create it or set PFAS_TEST_USER to an existing user
+SKIPPED [1] tests/integration/test_bank_intelligence/test_sanjay_integration.py:265: User directory not found: /home/sshankar/projects/pfas-project/Users/Sanjay
+Create it or set PFAS_TEST_USER to an existing user
+SKIPPED [1] tests/integration/test_bank_intelligence/test_sanjay_integration.py:297: User directory not found: /home/sshankar/projects/pfas-project/Users/Sanjay
+Create it or set PFAS_TEST_USER to an existing user
+SKIPPED [1] tests/integration/test_epf_integration.py:19: User directory not found: /home/sshankar/projects/pfas-project/Users/Sanjay
+Create it or set PFAS_TEST_USER to an existing user
+SKIPPED [1] tests/integration/test_epf_integration.py:39: User directory not found: /home/sshankar/projects/pfas-project/Users/Sanjay
+Create it or set PFAS_TEST_USER to an existing user
+SKIPPED [1] tests/integration/test_epf_integration.py:56: User directory not found: /home/sshankar/projects/pfas-project/Users/Sanjay
+Create it or set PFAS_TEST_USER to an existing user
+SKIPPED [1] tests/integration/test_epf_integration.py:73: User directory not found: /home/sshankar/projects/pfas-project/Users/Sanjay
+Create it or set PFAS_TEST_USER to an existing user
+SKIPPED [1] tests/integration/test_epf_integration.py:88: User directory not found: /home/sshankar/projects/pfas-project/Users/Sanjay
+Create it or set PFAS_TEST_USER to an existing user
+SKIPPED [1] tests/integration/test_epf_integration.py:105: User directory not found: /home/sshankar/projects/pfas-project/Users/Sanjay
+Create it or set PFAS_TEST_USER to an existing user
+SKIPPED [1] tests/integration/test_epf_integration.py:120: User directory not found: /home/sshankar/projects/pfas-project/Users/Sanjay
+Create it or set PFAS_TEST_USER to an existing user
+SKIPPED [1] tests/integration/test_mf_cams_integration.py:11: User directory not found: /home/sshankar/projects/pfas-project/Users/Sanjay
+Create it or set PFAS_TEST_USER to an existing user
+SKIPPED [1] tests/integration/test_mf_cams_integration.py:21: User directory not found: /home/sshankar/projects/pfas-project/Users/Sanjay
+Create it or set PFAS_TEST_USER to an existing user
+SKIPPED [1] tests/integration/test_mf_cams_integration.py:37: User directory not found: /home/sshankar/projects/pfas-project/Users/Sanjay
+Create it or set PFAS_TEST_USER to an existing user
+SKIPPED [1] tests/integration/test_nps_integration.py:11: User directory not found: /home/sshankar/projects/pfas-project/Users/Sanjay
+Create it or set PFAS_TEST_USER to an existing user
+SKIPPED [1] tests/integration/test_nps_integration.py:24: User directory not found: /home/sshankar/projects/pfas-project/Users/Sanjay
+Create it or set PFAS_TEST_USER to an existing user
+SKIPPED [1] tests/integration/test_nps_integration.py:33: User directory not found: /home/sshankar/projects/pfas-project/Users/Sanjay
+Create it or set PFAS_TEST_USER to an existing user
+SKIPPED [1] tests/integration/test_nps_integration.py:43: User directory not found: /home/sshankar/projects/pfas-project/Users/Sanjay
+Create it or set PFAS_TEST_USER to an existing user
+SKIPPED [1] tests/integration/test_nps_integration.py:56: User directory not found: /home/sshankar/projects/pfas-project/Users/Sanjay
+Create it or set PFAS_TEST_USER to an existing user
+SKIPPED [1] tests/integration/test_ppf_integration.py:11: User directory not found: /home/sshankar/projects/pfas-project/Users/Sanjay
+Create it or set PFAS_TEST_USER to an existing user
+SKIPPED [1] tests/integration/test_ppf_integration.py:30: User directory not found: /home/sshankar/projects/pfas-project/Users/Sanjay
+Create it or set PFAS_TEST_USER to an existing user
+SKIPPED [1] tests/integration/test_ppf_integration.py:39: User directory not found: /home/sshankar/projects/pfas-project/Users/Sanjay
+Create it or set PFAS_TEST_USER to an existing user
+SKIPPED [1] tests/integration/test_ppf_integration.py:49: User directory not found: /home/sshankar/projects/pfas-project/Users/Sanjay
+Create it or set PFAS_TEST_USER to an existing user
+SKIPPED [1] tests/integration/test_ppf_integration.py:62: User directory not found: /home/sshankar/projects/pfas-project/Users/Sanjay
+Create it or set PFAS_TEST_USER to an existing user
+SKIPPED [1] tests/integration/test_sanjay_full_fy.py:49: User directory not found: /home/sshankar/projects/pfas-project/Users/Sanjay
+Create it or set PFAS_TEST_USER to an existing user
+SKIPPED [1] tests/integration/test_sanjay_full_fy.py:53: User directory not found: /home/sshankar/projects/pfas-project/Users/Sanjay
+Create it or set PFAS_TEST_USER to an existing user
+SKIPPED [1] tests/integration/test_sanjay_full_fy.py:84: User directory not found: /home/sshankar/projects/pfas-project/Users/Sanjay
+Create it or set PFAS_TEST_USER to an existing user
+SKIPPED [1] tests/integration/test_sanjay_full_fy.py:111: User directory not found: /home/sshankar/projects/pfas-project/Users/Sanjay
+Create it or set PFAS_TEST_USER to an existing user
+SKIPPED [1] tests/integration/test_sanjay_full_fy.py:136: User directory not found: /home/sshankar/projects/pfas-project/Users/Sanjay
+Create it or set PFAS_TEST_USER to an existing user
+SKIPPED [1] tests/integration/test_sanjay_full_fy.py:160: User directory not found: /home/sshankar/projects/pfas-project/Users/Sanjay
+Create it or set PFAS_TEST_USER to an existing user
+SKIPPED [1] tests/integration/test_sanjay_full_fy.py:184: User directory not found: /home/sshankar/projects/pfas-project/Users/Sanjay
+Create it or set PFAS_TEST_USER to an existing user
+SKIPPED [1] tests/integration/test_sanjay_full_fy.py:206: User directory not found: /home/sshankar/projects/pfas-project/Users/Sanjay
+Create it or set PFAS_TEST_USER to an existing user
+SKIPPED [1] tests/integration/test_sanjay_full_fy.py:349: User directory not found: /home/sshankar/projects/pfas-project/Users/Sanjay
+Create it or set PFAS_TEST_USER to an existing user
+SKIPPED [1] tests/integration/test_sanjay_full_fy.py:401: User directory not found: /home/sshankar/projects/pfas-project/Users/Sanjay
+Create it or set PFAS_TEST_USER to an existing user
+SKIPPED [1] tests/integration/test_stock_integration.py:22: User directory not found: /home/sshankar/projects/pfas-project/Users/Sanjay
+Create it or set PFAS_TEST_USER to an existing user
+SKIPPED [1] tests/integration/test_stock_integration.py:31: User directory not found: /home/sshankar/projects/pfas-project/Users/Sanjay
+Create it or set PFAS_TEST_USER to an existing user
+SKIPPED [1] tests/integration/test_stock_integration.py:44: User directory not found: /home/sshankar/projects/pfas-project/Users/Sanjay
+Create it or set PFAS_TEST_USER to an existing user
+SKIPPED [1] tests/integration/test_stock_integration.py:61: User directory not found: /home/sshankar/projects/pfas-project/Users/Sanjay
+Create it or set PFAS_TEST_USER to an existing user
+SKIPPED [1] tests/unit/test_services/test_encrypted_file_handler.py:265: Requires pdfplumber to be installed
+SKIPPED [1] tests/unit/test_services/test_encrypted_file_handler.py:272: Requires PyPDF2 to be installed
+FAILED tests/integration/test_full_fy.py::TestFullFY2425::test_01_load_bank_statements
+FAILED tests/integration/test_full_fy.py::TestFullFY2425::test_02_load_mf_statements
+FAILED tests/integration/test_full_fy.py::TestFullFY2425::test_03_load_salary_form16
+FAILED tests/integration/test_full_fy.py::TestFullFY2425::test_05_tds_reconciliation
+FAILED tests/integration/test_full_fy.py::TestFullFY2425::test_06_generate_tax_computation
+FAILED tests/integration/test_full_fy.py::TestFullFY2425::test_07_itr2_json_export
+FAILED tests/unit/test_analyzers/test_mf_enhanced.py::TestMFReconciler::test_save_reconciliation_result
+================== 7 failed, 877 passed, 48 skipped in 35.04s ==================
