@@ -34,6 +34,7 @@ import pandas as pd
 
 from pfas.parsers.mf.classifier import classify_scheme
 from pfas.parsers.mf.models import AssetClass
+from pfas.core.paths import PathResolver
 
 logger = logging.getLogger(__name__)
 
@@ -1212,11 +1213,19 @@ class MFAnalyzer:
             user_id = self._get_or_create_user(user_name)
         self.user_id = user_id
 
-        # Determine MF folder
+        # Determine MF folder using PathResolver (centralized, config-driven)
         if mf_folder is None:
-            data_root = Path(self.config.get("paths", {}).get("data_root", f"Data/Users/{user_name}/inbox"))
-            mf_subfolder = self.config.get("paths", {}).get("mf_folder", "Mutual-Fund")
-            mf_folder = data_root / mf_subfolder
+            # Try PathResolver first, fallback to config paths
+            try:
+                project_root = Path(self.config.get("paths", {}).get("project_root", Path.cwd()))
+                resolver = PathResolver(project_root, user_name)
+                mf_subfolder = self.config.get("paths", {}).get("mf_folder", "Mutual-Fund")
+                mf_folder = resolver.inbox() / mf_subfolder
+            except Exception:
+                # Fallback to config-based path
+                data_root = Path(self.config.get("paths", {}).get("data_root", f"Users/{user_name}/inbox"))
+                mf_subfolder = self.config.get("paths", {}).get("mf_folder", "Mutual-Fund")
+                mf_folder = data_root / mf_subfolder
 
         logger.info(f"Analyzing MF statements for {user_name} in {mf_folder}")
 

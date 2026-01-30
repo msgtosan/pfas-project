@@ -2,12 +2,15 @@
 Base class for bank statement parsers.
 
 Provides common functionality for parsing different bank statement formats.
+Uses TransactionService for all database operations.
 """
 
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Optional, List
+from decimal import Decimal
 import sqlite3
+import hashlib
 
 try:
     import keyring
@@ -19,6 +22,14 @@ import pdfplumber
 import pandas as pd
 
 from pfas.core.encryption import encrypt_field
+from pfas.core.transaction_service import (
+    TransactionService,
+    TransactionSource,
+    AssetRecord,
+    IdempotencyKeyGenerator,
+)
+from pfas.core.journal import JournalEntry
+from pfas.core.accounts import get_account_by_code
 from pfas.parsers.bank.models import ParseResult, BankTransaction, BankAccount
 
 
@@ -148,62 +159,56 @@ class BankStatementParser(ABC):
 
     def save_to_db(self, result: ParseResult, user_id: int = None, coa_account_id: int = None) -> int:
         """
-        Save parsed transactions to database with transaction atomicity.
+        Save parsed transactions to database via TransactionService.
+
+        All inserts flow through TransactionService.record() ensuring:
+        - Idempotency (duplicate prevention)
+        - Audit logging
+        - Atomic transactions
 
         Args:
             result: ParseResult from parsing
-            user_id: User ID (optional, for multi-user support)
+            user_id: User ID (required for multi-user support)
             coa_account_id: Chart of accounts account ID for this bank account
 
         Returns:
             Number of transactions saved
 
         Raises:
-            Exception: If transaction save fails (with automatic rollback)
+            Exception: If transaction save fails
         """
         if not result.success or not result.account:
             return 0
 
-        # Use transaction for atomicity
-        cursor = self.conn.cursor()
-        in_transaction = self.conn.in_transaction
+        if user_id is None:
+            user_id = 1  # Default user
 
-        try:
-            if not in_transaction:
-                cursor.execute("BEGIN IMMEDIATE")
+        # Initialize TransactionService
+        txn_service = TransactionService(self.conn)
 
-            # Create or get bank account
-            bank_account_id = self._get_or_create_bank_account(
-                result.account,
-                user_id,
-                coa_account_id
-            )
+        # Create or get bank account (reference data, uses asset_only)
+        bank_account_id = self._get_or_create_bank_account(
+            txn_service, result.account, user_id, coa_account_id
+        )
 
-            # Insert transactions (with duplicate prevention)
-            count = 0
-            for txn in result.transactions:
-                if self._insert_transaction(bank_account_id, txn, result.source_file, user_id):
-                    count += 1
+        # Insert transactions with journal entries
+        count = 0
+        for idx, txn in enumerate(result.transactions):
+            if self._record_transaction(
+                txn_service, bank_account_id, txn, result.source_file, idx, user_id
+            ):
+                count += 1
 
-            if not in_transaction:
-                self.conn.commit()
-            return count
-
-        except Exception as e:
-            if not in_transaction:
-                self.conn.rollback()
-            raise Exception(f"Failed to save transactions: {e}") from e
+        return count
 
     def _get_or_create_bank_account(
         self,
+        txn_service: TransactionService,
         account: BankAccount,
-        user_id: Optional[int],
+        user_id: int,
         coa_account_id: Optional[int]
     ) -> int:
-        """Get existing bank account or create new one."""
-        # Encrypt account number
-        encrypted, salt = encrypt_field(account.account_number, self.master_key)
-
+        """Get existing bank account or create new one via TransactionService."""
         # Check if account exists
         cursor = self.conn.execute(
             "SELECT id FROM bank_accounts WHERE account_number_last4 = ? AND bank_name = ?",
@@ -214,76 +219,185 @@ class BankStatementParser(ABC):
         if row:
             return row["id"]
 
-        # Create new account
-        cursor = self.conn.execute(
-            """
-            INSERT INTO bank_accounts
-            (account_number_encrypted, account_number_salt, account_number_last4,
-             bank_name, branch, ifsc_code, account_type, opening_date, user_id, account_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                encrypted,
-                salt,
-                account.last4,
-                account.bank_name,
-                account.branch,
-                account.ifsc_code,
-                account.account_type,
-                account.opening_date.isoformat() if account.opening_date else None,
-                user_id,
-                coa_account_id
-            )
+        # Encrypt account number
+        encrypted, salt = encrypt_field(account.account_number, self.master_key)
+
+        # Create via TransactionService
+        idempotency_key = f"bank_account:{account.bank_name}:{account.last4}"
+
+        asset_record = AssetRecord(
+            table_name="bank_accounts",
+            data={
+                "account_number_encrypted": encrypted,
+                "account_number_salt": salt,
+                "account_number_last4": account.last4,
+                "bank_name": account.bank_name,
+                "branch": account.branch,
+                "ifsc_code": account.ifsc_code,
+                "account_type": account.account_type,
+                "opening_date": account.opening_date.isoformat() if account.opening_date else None,
+                "user_id": user_id,
+                "account_id": coa_account_id,
+            },
+            on_conflict="IGNORE"
         )
 
-        return cursor.lastrowid
+        result = txn_service.record_asset_only(
+            user_id=user_id,
+            asset_records=[asset_record],
+            idempotency_key=idempotency_key,
+            source=self._get_transaction_source(),
+            description=f"Bank account: {account.bank_name} ****{account.last4}",
+        )
 
-    def _insert_transaction(
+        if result.asset_record_ids.get("bank_accounts"):
+            return result.asset_record_ids["bank_accounts"]
+
+        # If insert was ignored (duplicate), fetch the existing ID
+        cursor = self.conn.execute(
+            "SELECT id FROM bank_accounts WHERE account_number_last4 = ? AND bank_name = ?",
+            (account.last4, account.bank_name)
+        )
+        row = cursor.fetchone()
+        return row["id"] if row else 0
+
+    def _record_transaction(
         self,
+        txn_service: TransactionService,
         bank_account_id: int,
         txn: BankTransaction,
         source_file: str,
-        user_id: Optional[int] = None
+        row_idx: int,
+        user_id: int
     ) -> bool:
         """
-        Insert transaction with duplicate prevention.
+        Record bank transaction via TransactionService with journal entry.
 
         Args:
+            txn_service: TransactionService instance
             bank_account_id: Bank account ID
             txn: Bank transaction
             source_file: Source file path
-            user_id: User ID (optional, for multi-user support)
+            row_idx: Row index for idempotency
+            user_id: User ID
 
         Returns:
-            True if inserted, False if duplicate.
+            True if recorded, False if duplicate.
         """
-        try:
-            self.conn.execute(
-                """
-                INSERT INTO bank_transactions
-                (bank_account_id, date, value_date, description, reference_number,
-                 debit, credit, balance, category, is_interest, source_file, user_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    bank_account_id,
-                    txn.date.isoformat(),
-                    txn.value_date.isoformat() if txn.value_date else None,
-                    txn.description,
-                    txn.reference_number,
-                    str(txn.debit),
-                    str(txn.credit),
-                    str(txn.balance) if txn.balance else None,
-                    txn.category.value,
-                    txn.is_interest,
-                    source_file,
-                    user_id
-                )
-            )
-            return True
-        except sqlite3.IntegrityError:
-            # Duplicate transaction
-            return False
+        # Generate idempotency key
+        idempotency_key = IdempotencyKeyGenerator.bank_transaction(
+            account_number=str(bank_account_id),
+            txn_date=txn.date,
+            ref_no=txn.reference_number or f"row_{row_idx}",
+            amount=txn.debit if txn.debit > 0 else txn.credit,
+        )
+
+        # Create journal entries
+        entries = self._create_journal_entries(txn, user_id)
+
+        # Create asset record for bank_transactions table
+        asset_record = AssetRecord(
+            table_name="bank_transactions",
+            data={
+                "bank_account_id": bank_account_id,
+                "date": txn.date.isoformat(),
+                "value_date": txn.value_date.isoformat() if txn.value_date else None,
+                "description": txn.description,
+                "reference_number": txn.reference_number,
+                "debit": str(txn.debit),
+                "credit": str(txn.credit),
+                "balance": str(txn.balance) if txn.balance else None,
+                "category": txn.category.value,
+                "is_interest": txn.is_interest,
+                "source_file": source_file,
+                "user_id": user_id,
+            },
+            on_conflict="IGNORE"
+        )
+
+        # Record via TransactionService
+        result = txn_service.record(
+            user_id=user_id,
+            entries=entries,
+            description=txn.description[:100] if txn.description else "Bank transaction",
+            source=self._get_transaction_source(),
+            idempotency_key=idempotency_key,
+            txn_date=txn.date,
+            reference_type="BANK_TRANSACTION",
+            asset_records=[asset_record],
+        )
+
+        return result.result.value == "success"
+
+    def _create_journal_entries(self, txn: BankTransaction, user_id: int) -> List[JournalEntry]:
+        """Create journal entries for bank transaction."""
+        entries = []
+
+        # Get bank account ID from chart of accounts
+        bank_account = get_account_by_code(self.conn, "1101")  # Bank - Savings
+        if not bank_account:
+            return entries
+
+        bank_account_id = bank_account.id
+
+        # Map category to account code
+        category_to_account = {
+            "SALARY": "4100",
+            "INTEREST": "4201",
+            "DIVIDEND": "4203",
+            "REFUND": "1601",
+            "RENT": "4401",
+            "MF_INVESTMENT": "1201",
+            "STOCK_INVESTMENT": "1203",
+            "FD": "1103",
+            "PPF": "1303",
+            "TAX": "1603",
+            "EXPENSE": "5202",
+        }
+
+        category_str = txn.category.value if hasattr(txn.category, 'value') else str(txn.category)
+        counter_account_code = category_to_account.get(category_str.upper(), "3200")  # Retained Earnings default
+        counter_account = get_account_by_code(self.conn, counter_account_code)
+
+        if not counter_account:
+            counter_account = get_account_by_code(self.conn, "3200")  # Default
+
+        if txn.credit > 0:
+            # Credit to bank (deposit)
+            entries.append(JournalEntry(
+                account_id=bank_account_id,
+                debit=txn.credit,
+                narration=txn.description[:100] if txn.description else "Deposit"
+            ))
+            entries.append(JournalEntry(
+                account_id=counter_account.id,
+                credit=txn.credit,
+                narration=f"Credit: {category_str}"
+            ))
+        elif txn.debit > 0:
+            # Debit from bank (withdrawal)
+            entries.append(JournalEntry(
+                account_id=counter_account.id,
+                debit=txn.debit,
+                narration=f"Debit: {category_str}"
+            ))
+            entries.append(JournalEntry(
+                account_id=bank_account_id,
+                credit=txn.debit,
+                narration=txn.description[:100] if txn.description else "Withdrawal"
+            ))
+
+        return entries
+
+    def _get_transaction_source(self) -> TransactionSource:
+        """Get transaction source based on bank name. Override in subclass."""
+        bank_name = self.BANK_NAME.upper()
+        if "ICICI" in bank_name:
+            return TransactionSource.PARSER_ICICI
+        elif "HDFC" in bank_name:
+            return TransactionSource.PARSER_HDFC
+        else:
+            return TransactionSource.PARSER_ICICI  # Default
 
     def _table_to_text(self, table: List[List]) -> str:
         """Convert table to text format."""

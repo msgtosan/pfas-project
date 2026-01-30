@@ -135,13 +135,16 @@ class TestNPSParser:
         """Test creating NPS account."""
         parser = NPSParser(db_connection)
 
+        from pfas.core.transaction_service import TransactionService
+
         account = NPSAccount(
             pran="110012345678",
             nodal_office="NSDL",
             scheme_preference="Aggressive"
         )
 
-        account_id = parser._get_or_create_account(account, user_id=sample_user["id"])
+        txn_service = TransactionService(db_connection)
+        account_id = parser._get_or_create_account_via_service(txn_service, account, user_id=sample_user["id"])
         assert account_id > 0
 
         # Verify it was created

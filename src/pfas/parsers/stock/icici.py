@@ -4,8 +4,17 @@ import pandas as pd
 from pathlib import Path
 from datetime import datetime, date as date_type
 from decimal import Decimal
-from typing import Optional
+from typing import Optional, List
 import sqlite3
+import hashlib
+
+from pfas.core.transaction_service import (
+    TransactionService,
+    TransactionSource,
+    AssetRecord,
+)
+from pfas.core.journal import JournalEntry
+from pfas.core.accounts import get_account_by_code
 
 from .models import StockTrade, TradeType, TradeCategory, ParseResult, CapitalGainsSummary
 
@@ -339,7 +348,13 @@ class ICICIDirectParser:
         broker_name: str = "ICICI Direct"
     ) -> int:
         """
-        Save parsed stock trades to database.
+        Save parsed stock trades to database via TransactionService.
+
+        All inserts flow through TransactionService.record() ensuring:
+        - Idempotency (duplicate prevention)
+        - Audit logging
+        - Double-entry accounting (for BUY/SELL trades)
+        - Atomic transactions
 
         Args:
             result: ParseResult from parsing
@@ -357,33 +372,37 @@ class ICICIDirectParser:
         if not result.success or not result.trades:
             return 0
 
-        cursor = self.conn.cursor()
-        in_transaction = self.conn.in_transaction
+        if user_id is None:
+            user_id = 1  # Default user
 
-        try:
-            if not in_transaction:
-                cursor.execute("BEGIN IMMEDIATE")
+        # Initialize TransactionService
+        txn_service = TransactionService(self.conn)
 
-            # Get or create broker
-            broker_id = self._get_or_create_broker(broker_name)
+        # Get or create broker via TransactionService
+        broker_id = self._get_or_create_broker_via_service(txn_service, broker_name, user_id)
 
-            count = 0
-            for trade in result.trades:
-                if self._insert_trade(broker_id, user_id, trade, result.source_file):
-                    count += 1
+        # Generate file hash for idempotency keys
+        file_hash = self._generate_file_hash(result.source_file)
 
-            if not in_transaction:
-                self.conn.commit()
+        count = 0
+        for idx, trade in enumerate(result.trades):
+            if self._record_trade(txn_service, broker_id, user_id, trade, result.source_file, file_hash, idx):
+                count += 1
 
-            return count
+        return count
 
-        except Exception as e:
-            if not in_transaction:
-                self.conn.rollback()
-            raise Exception(f"Failed to save stock trades: {e}") from e
+    def _generate_file_hash(self, file_path: str) -> str:
+        """Generate short hash for file path (for idempotency keys)."""
+        return hashlib.sha256(file_path.encode()).hexdigest()[:8]
 
-    def _get_or_create_broker(self, broker_name: str) -> int:
-        """Get or create stock broker and return ID."""
+    def _get_or_create_broker_via_service(
+        self,
+        txn_service: TransactionService,
+        broker_name: str,
+        user_id: int
+    ) -> int:
+        """Get or create stock broker via TransactionService."""
+        # Check if broker exists
         cursor = self.conn.execute(
             "SELECT id FROM stock_brokers WHERE name = ?",
             (broker_name,)
@@ -391,59 +410,175 @@ class ICICIDirectParser:
         row = cursor.fetchone()
 
         if row:
-            return row['id']
+            return row['id'] if isinstance(row, dict) else row[0]
 
+        # Create via TransactionService
+        idempotency_key = f"broker:{broker_name.lower().replace(' ', '_')}"
+
+        asset_record = AssetRecord(
+            table_name="stock_brokers",
+            data={"name": broker_name},
+            on_conflict="IGNORE"
+        )
+
+        result = txn_service.record_asset_only(
+            user_id=user_id,
+            asset_records=[asset_record],
+            idempotency_key=idempotency_key,
+            source=TransactionSource.PARSER_ICICI,
+            description=f"Stock broker: {broker_name}",
+        )
+
+        if result.asset_record_ids.get("stock_brokers"):
+            return result.asset_record_ids["stock_brokers"]
+
+        # If insert was ignored, fetch existing
         cursor = self.conn.execute(
-            "INSERT INTO stock_brokers (name) VALUES (?)",
+            "SELECT id FROM stock_brokers WHERE name = ?",
             (broker_name,)
         )
-        return cursor.lastrowid
+        row = cursor.fetchone()
+        return row['id'] if isinstance(row, dict) else row[0] if row else 0
 
-    def _insert_trade(
+    def _record_trade(
         self,
+        txn_service: TransactionService,
         broker_id: int,
-        user_id: Optional[int],
+        user_id: int,
         trade: StockTrade,
-        source_file: str
+        source_file: str,
+        file_hash: str,
+        row_idx: int
     ) -> bool:
-        """Insert stock trade into database."""
-        try:
-            self.conn.execute(
-                """INSERT INTO stock_trades
-                (broker_id, user_id, symbol, isin, trade_date, trade_type, quantity,
-                 price, amount, brokerage, stt, exchange_charges, gst, sebi_charges,
-                 stamp_duty, net_amount, trade_category, buy_date, buy_price,
-                 cost_of_acquisition, holding_period_days, is_long_term, capital_gain,
-                 source_file)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    broker_id,
-                    user_id,
-                    trade.symbol,
-                    trade.isin,
-                    trade.trade_date.isoformat(),
-                    trade.trade_type.value,
-                    trade.quantity,
-                    str(trade.price),
-                    str(trade.amount),
-                    str(trade.brokerage),
-                    str(trade.stt),
-                    str(trade.exchange_charges),
-                    str(trade.gst),
-                    str(trade.sebi_charges),
-                    str(trade.stamp_duty),
-                    str(trade.net_amount),
-                    trade.trade_category.value if trade.trade_category else None,
-                    trade.buy_date.isoformat() if trade.buy_date else None,
-                    str(trade.buy_price) if trade.buy_price else None,
-                    str(trade.cost_of_acquisition) if trade.cost_of_acquisition else None,
-                    trade.holding_period_days,
-                    trade.is_long_term,
-                    str(trade.capital_gain) if trade.capital_gain else None,
-                    source_file
-                )
-            )
-            return True
-        except sqlite3.IntegrityError:
-            # Duplicate trade
-            return False
+        """
+        Record stock trade via TransactionService with journal entry.
+
+        For BUY trades:
+            Dr Indian Stocks (1203)  | Amount
+            Cr Bank Account (1101)   | Amount
+
+        For SELL trades:
+            Dr Bank Account (1101)   | Proceeds
+            Cr Indian Stocks (1203)  | Cost Basis
+            Cr/Dr Capital Gains      | Gain/Loss
+        """
+        # Generate idempotency key
+        idempotency_key = f"stock:{file_hash}:{row_idx}:{trade.symbol}:{trade.trade_date.isoformat()}:{trade.quantity}:{trade.trade_type.value}"
+
+        # Create journal entries
+        entries = self._create_journal_entries(trade, user_id)
+
+        # Create asset record for stock_trades table
+        asset_record = AssetRecord(
+            table_name="stock_trades",
+            data={
+                "broker_id": broker_id,
+                "user_id": user_id,
+                "symbol": trade.symbol,
+                "isin": trade.isin,
+                "trade_date": trade.trade_date.isoformat(),
+                "trade_type": trade.trade_type.value,
+                "quantity": trade.quantity,
+                "price": str(trade.price),
+                "amount": str(trade.amount),
+                "brokerage": str(trade.brokerage),
+                "stt": str(trade.stt),
+                "exchange_charges": str(trade.exchange_charges),
+                "gst": str(trade.gst),
+                "sebi_charges": str(trade.sebi_charges),
+                "stamp_duty": str(trade.stamp_duty),
+                "net_amount": str(trade.net_amount),
+                "trade_category": trade.trade_category.value if trade.trade_category else None,
+                "buy_date": trade.buy_date.isoformat() if trade.buy_date else None,
+                "buy_price": str(trade.buy_price) if trade.buy_price else None,
+                "cost_of_acquisition": str(trade.cost_of_acquisition) if trade.cost_of_acquisition else None,
+                "holding_period_days": trade.holding_period_days,
+                "is_long_term": trade.is_long_term,
+                "capital_gain": str(trade.capital_gain) if trade.capital_gain else None,
+                "source_file": source_file,
+            },
+            on_conflict="IGNORE"
+        )
+
+        # Record via TransactionService
+        description = f"Stock {trade.trade_type.value}: {trade.symbol} x {trade.quantity}"
+        result = txn_service.record(
+            user_id=user_id,
+            entries=entries,
+            description=description[:100],
+            source=TransactionSource.PARSER_ICICI,
+            idempotency_key=idempotency_key,
+            txn_date=trade.trade_date,
+            reference_type=f"STOCK_{trade.trade_type.value}",
+            asset_records=[asset_record],
+        )
+
+        return result.result.value == "success"
+
+    def _create_journal_entries(self, trade: StockTrade, user_id: int) -> List[JournalEntry]:
+        """Create journal entries for stock trade."""
+        entries = []
+
+        # Get account IDs
+        stock_account = get_account_by_code(self.conn, "1203")  # Indian Stocks
+        bank_account = get_account_by_code(self.conn, "1101")  # Bank - Savings
+
+        if not stock_account or not bank_account:
+            return entries
+
+        if trade.trade_type == TradeType.BUY:
+            # BUY: Dr Stock Asset | Cr Bank
+            entries.append(JournalEntry(
+                account_id=stock_account.id,
+                debit=trade.net_amount,
+                narration=f"Buy: {trade.symbol} x {trade.quantity} @ {trade.price}"
+            ))
+            entries.append(JournalEntry(
+                account_id=bank_account.id,
+                credit=trade.net_amount,
+                narration=f"Payment for stock: {trade.symbol}"
+            ))
+
+        elif trade.trade_type == TradeType.SELL:
+            # SELL: Dr Bank | Cr Stock Asset | Cr/Dr Capital Gains
+            cost_basis = trade.cost_of_acquisition or Decimal("0")
+            capital_gain = trade.capital_gain or (trade.net_amount - cost_basis)
+
+            # Dr Bank for proceeds
+            entries.append(JournalEntry(
+                account_id=bank_account.id,
+                debit=trade.net_amount,
+                narration=f"Proceeds from sale: {trade.symbol}"
+            ))
+
+            # Cr Stock asset for cost basis
+            if cost_basis > 0:
+                entries.append(JournalEntry(
+                    account_id=stock_account.id,
+                    credit=cost_basis,
+                    narration=f"Cost basis: {trade.symbol} x {trade.quantity}"
+                ))
+
+            # Capital gains/loss
+            if capital_gain != Decimal("0"):
+                # Determine STCG vs LTCG
+                cg_code = "4302" if trade.is_long_term else "4301"  # LTCG vs STCG
+                cg_account = get_account_by_code(self.conn, cg_code)
+
+                if cg_account:
+                    if capital_gain > 0:
+                        # Gain: Credit capital gains
+                        entries.append(JournalEntry(
+                            account_id=cg_account.id,
+                            credit=capital_gain,
+                            narration=f"{'LTCG' if trade.is_long_term else 'STCG'}: {trade.symbol}"
+                        ))
+                    else:
+                        # Loss: Debit capital gains
+                        entries.append(JournalEntry(
+                            account_id=cg_account.id,
+                            debit=abs(capital_gain),
+                            narration=f"{'LTCL' if trade.is_long_term else 'STCL'}: {trade.symbol}"
+                        ))
+
+        return entries

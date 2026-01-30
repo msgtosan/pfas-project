@@ -73,6 +73,9 @@ CHART_OF_ACCOUNTS: Dict[str, Dict[str, Any]] = {
     "4104": {"name": "RSU Perquisite", "type": "INCOME", "parent": "4100"},
     "4105": {"name": "ESPP Perquisite", "type": "INCOME", "parent": "4100"},
     "4106": {"name": "Other Perquisites", "type": "INCOME", "parent": "4100"},
+    "4107": {"name": "Employer PF Contribution", "type": "INCOME", "parent": "4100"},
+    "4108": {"name": "Foreign Salary Income", "type": "INCOME", "parent": "4100"},
+    "4109": {"name": "Gross Salary - Composite", "type": "INCOME", "parent": "4100"},
 
     "4200": {"name": "Investment Income", "type": "INCOME", "parent": "4000"},
     "4201": {"name": "Bank Interest", "type": "INCOME", "parent": "4200"},
@@ -89,6 +92,9 @@ CHART_OF_ACCOUNTS: Dict[str, Dict[str, Any]] = {
     "4303": {"name": "CG - Debt (Slab)", "type": "INCOME", "parent": "4300"},
     "4304": {"name": "STCG - Foreign", "type": "INCOME", "parent": "4300"},
     "4305": {"name": "LTCG - Foreign 12.5%", "type": "INCOME", "parent": "4300"},
+    "4306": {"name": "Forex Gain/Loss", "type": "INCOME", "parent": "4300"},
+    "4307": {"name": "Realized Capital Gain", "type": "INCOME", "parent": "4300"},
+    "4308": {"name": "Realized Capital Loss", "type": "INCOME", "parent": "4300"},
 
     "4400": {"name": "Rental Income", "type": "INCOME", "parent": "4000"},
     "4401": {"name": "Gross Rental Income", "type": "INCOME", "parent": "4400"},
@@ -108,6 +114,13 @@ CHART_OF_ACCOUNTS: Dict[str, Dict[str, Any]] = {
     "5202": {"name": "Brokerage", "type": "EXPENSE", "parent": "5200"},
     "5203": {"name": "Rental Standard Deduction", "type": "EXPENSE", "parent": "5200"},
     "5204": {"name": "Municipal Tax", "type": "EXPENSE", "parent": "5200"},
+    "5205": {"name": "Forex Loss", "type": "EXPENSE", "parent": "5200"},
+
+    # Salary-related Expenses (5300)
+    "5300": {"name": "Salary Deductions", "type": "EXPENSE", "parent": "5000"},
+    "5301": {"name": "Professional Tax Paid", "type": "EXPENSE", "parent": "5300"},
+    "5302": {"name": "Income Tax Expense", "type": "EXPENSE", "parent": "5300"},
+    "5303": {"name": "Other Salary Deductions", "type": "EXPENSE", "parent": "5300"},
 }
 
 

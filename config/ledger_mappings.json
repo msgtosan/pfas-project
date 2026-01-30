@@ -1,0 +1,646 @@
+{
+  "$schema": "ledger_mappings_schema.json",
+  "version": "1.0.0",
+  "description": "Double-entry ledger mapping rules for PFAS parsers",
+  "last_updated": "2026-01-30",
+
+  "parser_mappings": {
+
+    "mf/cams.py": {
+      "sink_table": "mf_transactions",
+      "reference_tables": ["mf_amcs", "mf_schemes", "mf_folios"],
+      "transaction_types": {
+        "PURCHASE": {
+          "description": "Mutual fund purchase/SIP",
+          "entries": [
+            {"debit": "1201", "debit_name": "Mutual Funds - Equity", "debit_condition": "is_equity=true"},
+            {"debit": "1202", "debit_name": "Mutual Funds - Debt", "debit_condition": "is_equity=false"},
+            {"credit": "1101", "credit_name": "Bank - Savings"}
+          ],
+          "amount_field": "amount",
+          "idempotency_fields": ["folio_number", "date", "amount", "units"]
+        },
+        "REDEMPTION": {
+          "description": "Mutual fund redemption",
+          "entries": [
+            {"debit": "1101", "debit_name": "Bank - Savings", "amount": "proceeds"},
+            {"debit": "5201", "debit_name": "STT Paid", "amount": "stt", "condition": "stt > 0"},
+            {"credit": "1201", "credit_name": "Mutual Funds - Equity", "amount": "cost_basis", "condition": "is_equity=true"},
+            {"credit": "1202", "credit_name": "Mutual Funds - Debt", "amount": "cost_basis", "condition": "is_equity=false"},
+            {"credit": "4302", "credit_name": "LTCG - Equity 12.5%", "amount": "gain", "condition": "is_ltcg=true AND gain > 0"},
+            {"credit": "4301", "credit_name": "STCG - Equity 20%", "amount": "gain", "condition": "is_ltcg=false AND gain > 0"},
+            {"debit": "4308", "debit_name": "Realized Capital Loss", "amount": "abs(gain)", "condition": "gain < 0"}
+          ],
+          "requires_cost_basis": true,
+          "idempotency_fields": ["folio_number", "date", "proceeds", "units"]
+        },
+        "SWITCH_IN": {
+          "description": "Switch into a scheme",
+          "entries": [
+            {"debit": "1201", "debit_name": "Mutual Funds - Equity", "condition": "is_equity=true"},
+            {"debit": "1202", "debit_name": "Mutual Funds - Debt", "condition": "is_equity=false"},
+            {"credit": "1201", "credit_name": "Mutual Funds - Equity", "condition": "from_is_equity=true"},
+            {"credit": "1202", "credit_name": "Mutual Funds - Debt", "condition": "from_is_equity=false"}
+          ],
+          "note": "Switch treated as redemption + purchase for tax purposes"
+        },
+        "SWITCH_OUT": {
+          "description": "Switch out of a scheme",
+          "entries": [
+            {"debit": "1201", "debit_name": "Mutual Funds - Equity", "condition": "to_is_equity=true"},
+            {"debit": "1202", "debit_name": "Mutual Funds - Debt", "condition": "to_is_equity=false"},
+            {"credit": "1201", "credit_name": "Mutual Funds - Equity", "amount": "cost_basis", "condition": "is_equity=true"},
+            {"credit": "1202", "credit_name": "Mutual Funds - Debt", "amount": "cost_basis", "condition": "is_equity=false"},
+            {"credit": "4301", "credit_name": "STCG - Equity 20%", "amount": "gain", "condition": "gain > 0"}
+          ],
+          "requires_cost_basis": true
+        },
+        "DIVIDEND_PAYOUT": {
+          "description": "Dividend payout to bank",
+          "entries": [
+            {"debit": "1101", "debit_name": "Bank - Savings"},
+            {"credit": "4203", "credit_name": "Dividend - Indian"}
+          ]
+        },
+        "DIVIDEND_REINVEST": {
+          "description": "Dividend reinvested as units",
+          "entries": [
+            {"debit": "1201", "debit_name": "Mutual Funds - Equity", "condition": "is_equity=true"},
+            {"debit": "1202", "debit_name": "Mutual Funds - Debt", "condition": "is_equity=false"},
+            {"credit": "4203", "credit_name": "Dividend - Indian"}
+          ]
+        }
+      }
+    },
+
+    "mf/karvy.py": {
+      "sink_table": "mf_transactions",
+      "inherits": "mf/cams.py",
+      "reference_tables": ["mf_amcs", "mf_schemes", "mf_folios"]
+    },
+
+    "bank/base.py": {
+      "sink_table": "bank_transactions",
+      "reference_tables": ["bank_accounts"],
+      "transaction_types": {
+        "CREDIT": {
+          "description": "Deposit/Credit to bank account",
+          "entries": [
+            {"debit": "1101", "debit_name": "Bank - Savings"},
+            {"credit": "4100", "credit_name": "Salary Income", "condition": "category=SALARY"},
+            {"credit": "4201", "credit_name": "Bank Interest", "condition": "category=INTEREST"},
+            {"credit": "4203", "credit_name": "Dividend - Indian", "condition": "category=DIVIDEND"},
+            {"credit": "1601", "credit_name": "TDS Receivable", "condition": "category=REFUND"},
+            {"credit": "4401", "credit_name": "Gross Rental Income", "condition": "category=RENT"},
+            {"credit": "3200", "credit_name": "Retained Earnings", "condition": "category=OTHER"}
+          ],
+          "idempotency_fields": ["date", "reference_number", "credit", "description"]
+        },
+        "DEBIT": {
+          "description": "Withdrawal/Debit from bank account",
+          "entries": [
+            {"debit": "1201", "debit_name": "Mutual Funds - Equity", "condition": "category=MF_INVESTMENT"},
+            {"debit": "1203", "debit_name": "Indian Stocks", "condition": "category=STOCK_INVESTMENT"},
+            {"debit": "1103", "debit_name": "Bank - FD", "condition": "category=FD"},
+            {"debit": "1303", "debit_name": "PPF", "condition": "category=PPF"},
+            {"debit": "1603", "debit_name": "Advance Tax Paid", "condition": "category=TAX"},
+            {"debit": "5202", "debit_name": "Brokerage", "condition": "category=EXPENSE"},
+            {"debit": "3200", "debit_name": "Retained Earnings", "condition": "category=OTHER"},
+            {"credit": "1101", "credit_name": "Bank - Savings"}
+          ],
+          "idempotency_fields": ["date", "reference_number", "debit", "description"]
+        },
+        "INTEREST": {
+          "description": "Bank interest credit",
+          "entries": [
+            {"debit": "1101", "debit_name": "Bank - Savings"},
+            {"credit": "4201", "credit_name": "Bank Interest"}
+          ]
+        }
+      }
+    },
+
+    "bank/ingester.py": {
+      "sink_table": "bank_transactions",
+      "inherits": "bank/base.py"
+    },
+
+    "bank/icici.py": {
+      "sink_table": "bank_transactions",
+      "inherits": "bank/base.py"
+    },
+
+    "bank/hdfc.py": {
+      "sink_table": "bank_transactions",
+      "inherits": "bank/base.py"
+    },
+
+    "bank/sbi.py": {
+      "sink_table": "bank_transactions",
+      "inherits": "bank/base.py"
+    },
+
+    "stock/zerodha.py": {
+      "sink_table": "stock_trades",
+      "reference_tables": ["stock_brokers", "stock_dividends", "stock_stt_ledger"],
+      "transaction_types": {
+        "BUY": {
+          "description": "Stock purchase",
+          "entries": [
+            {"debit": "1203", "debit_name": "Indian Stocks", "amount": "amount + brokerage"},
+            {"credit": "1101", "credit_name": "Bank - Savings", "amount": "amount + brokerage"}
+          ],
+          "creates_lot": true,
+          "idempotency_fields": ["trade_id", "symbol", "trade_date", "quantity"]
+        },
+        "SELL": {
+          "description": "Stock sale",
+          "entries": [
+            {"debit": "1101", "debit_name": "Bank - Savings", "amount": "proceeds"},
+            {"debit": "5201", "debit_name": "STT Paid", "amount": "stt"},
+            {"debit": "5202", "debit_name": "Brokerage", "amount": "brokerage"},
+            {"credit": "1203", "credit_name": "Indian Stocks", "amount": "cost_basis"},
+            {"credit": "4302", "credit_name": "LTCG - Equity 12.5%", "amount": "gain", "condition": "is_ltcg=true AND gain > 0"},
+            {"credit": "4301", "credit_name": "STCG - Equity 20%", "amount": "gain", "condition": "is_ltcg=false AND gain > 0"},
+            {"debit": "4308", "debit_name": "Realized Capital Loss", "amount": "abs(gain)", "condition": "gain < 0"}
+          ],
+          "requires_cost_basis": true,
+          "depletes_lot": true,
+          "idempotency_fields": ["trade_id", "symbol", "trade_date", "quantity"]
+        },
+        "DIVIDEND": {
+          "description": "Stock dividend receipt",
+          "entries": [
+            {"debit": "1101", "debit_name": "Bank - Savings"},
+            {"credit": "4203", "credit_name": "Dividend - Indian"}
+          ],
+          "idempotency_fields": ["symbol", "record_date", "amount"]
+        }
+      }
+    },
+
+    "stock/icici.py": {
+      "sink_table": "stock_trades",
+      "inherits": "stock/zerodha.py",
+      "reference_tables": ["stock_brokers"]
+    },
+
+    "stock/ingester.py": {
+      "sink_table": "stock_transactions",
+      "inherits": "stock/zerodha.py",
+      "reference_tables": ["stock_holdings"]
+    },
+
+    "epf/epf.py": {
+      "sink_table": "epf_transactions",
+      "reference_tables": ["epf_accounts"],
+      "transaction_types": {
+        "CR": {
+          "description": "EPF monthly contribution",
+          "entries": [
+            {"debit": "1301", "debit_name": "EPF - Employee", "amount": "employee_contribution"},
+            {"debit": "1302", "debit_name": "EPF - Employer", "amount": "employer_contribution"},
+            {"credit": "1101", "credit_name": "Bank - Savings", "amount": "employee_contribution", "note": "Deducted from salary"},
+            {"credit": "4107", "credit_name": "Employer PF Contribution", "amount": "employer_contribution"}
+          ],
+          "idempotency_fields": ["uan", "wage_month", "employee_contribution", "employer_contribution"]
+        },
+        "INT": {
+          "description": "EPF interest accrual",
+          "entries": [
+            {"debit": "1301", "debit_name": "EPF - Employee", "amount": "employee_interest"},
+            {"debit": "1302", "debit_name": "EPF - Employer", "amount": "employer_interest"},
+            {"credit": "4205", "credit_name": "EPF Interest", "amount": "total_interest"}
+          ],
+          "idempotency_fields": ["uan", "financial_year", "total_interest"]
+        },
+        "DR": {
+          "description": "EPF withdrawal",
+          "entries": [
+            {"debit": "1101", "debit_name": "Bank - Savings"},
+            {"credit": "1301", "credit_name": "EPF - Employee", "amount": "employee_portion"},
+            {"credit": "1302", "credit_name": "EPF - Employer", "amount": "employer_portion"}
+          ],
+          "note": "Taxable if withdrawn before 5 years of continuous service"
+        }
+      }
+    },
+
+    "ppf/ppf.py": {
+      "sink_table": "ppf_transactions",
+      "reference_tables": ["ppf_accounts"],
+      "transaction_types": {
+        "DEPOSIT": {
+          "description": "PPF deposit",
+          "entries": [
+            {"debit": "1303", "debit_name": "PPF"},
+            {"credit": "1101", "credit_name": "Bank - Savings"}
+          ],
+          "max_annual": 150000,
+          "idempotency_fields": ["account_number", "date", "amount"]
+        },
+        "INTEREST": {
+          "description": "PPF interest credit",
+          "entries": [
+            {"debit": "1303", "debit_name": "PPF"},
+            {"credit": "4206", "credit_name": "PPF Interest"}
+          ],
+          "tax_status": "exempt",
+          "idempotency_fields": ["account_number", "financial_year", "amount"]
+        },
+        "WITHDRAWAL": {
+          "description": "PPF withdrawal (after lock-in)",
+          "entries": [
+            {"debit": "1101", "debit_name": "Bank - Savings"},
+            {"credit": "1303", "credit_name": "PPF"}
+          ],
+          "tax_status": "exempt",
+          "min_tenure_years": 6
+        }
+      }
+    },
+
+    "nps/nps.py": {
+      "sink_table": "nps_transactions",
+      "reference_tables": ["nps_accounts"],
+      "transaction_types": {
+        "CONTRIBUTION": {
+          "description": "NPS contribution",
+          "entries": [
+            {"debit": "1304", "debit_name": "NPS - Tier I", "condition": "tier=I"},
+            {"debit": "1305", "debit_name": "NPS - Tier II", "condition": "tier=II"},
+            {"credit": "1101", "credit_name": "Bank - Savings", "condition": "contribution_type=EMPLOYEE"},
+            {"credit": "4107", "credit_name": "Employer PF Contribution", "condition": "contribution_type=EMPLOYER"}
+          ],
+          "deduction_sections": {
+            "80CCD_1": {"tier": "I", "contribution_type": "EMPLOYEE", "part_of_150k": true},
+            "80CCD_1B": {"tier": "I", "contribution_type": "EMPLOYEE", "additional_50k": true},
+            "80CCD_2": {"tier": "I", "contribution_type": "EMPLOYER", "max": "10% of basic"}
+          },
+          "idempotency_fields": ["pran", "date", "tier", "amount"]
+        },
+        "SWITCH": {
+          "description": "NPS scheme switch",
+          "entries": [
+            {"debit": "1304", "debit_name": "NPS - Tier I", "amount": "to_scheme_amount"},
+            {"credit": "1304", "credit_name": "NPS - Tier I", "amount": "from_scheme_amount"}
+          ],
+          "note": "Internal transfer, no external cash movement"
+        },
+        "REDEMPTION": {
+          "description": "NPS partial withdrawal or annuity",
+          "entries": [
+            {"debit": "1101", "debit_name": "Bank - Savings", "amount": "lump_sum"},
+            {"credit": "1304", "credit_name": "NPS - Tier I"},
+            {"credit": "4300", "credit_name": "Capital Gains", "condition": "taxable_portion > 0"}
+          ],
+          "tax_rules": {
+            "lump_sum_exempt_pct": 60,
+            "annuity_taxable": true
+          }
+        }
+      }
+    },
+
+    "salary/payslip.py": {
+      "sink_table": "salary_records",
+      "reference_tables": ["rsu_tax_credits"],
+      "transaction_types": {
+        "SALARY": {
+          "description": "Monthly salary payment (multi-leg entry)",
+          "entries": [
+            {"debit": "1101", "debit_name": "Bank - Savings", "amount": "net_pay"},
+            {"debit": "1601", "debit_name": "TDS Receivable", "amount": "income_tax_deducted"},
+            {"debit": "1301", "debit_name": "EPF - Employee", "amount": "pf_employee"},
+            {"debit": "5301", "debit_name": "Professional Tax Paid", "amount": "professional_tax"},
+            {"debit": "5303", "debit_name": "Other Salary Deductions", "amount": "other_deductions"},
+            {"credit": "4100", "credit_name": "Salary Income", "amount": "gross_salary"}
+          ],
+          "validation": "gross_salary = net_pay + income_tax_deducted + pf_employee + professional_tax + other_deductions",
+          "idempotency_fields": ["employee_id", "pay_period", "gross_salary"]
+        },
+        "RSU_TAX_CREDIT": {
+          "description": "RSU tax credit (negative deduction = shares vested)",
+          "entries": [
+            {"debit": "1401", "debit_name": "US Stocks - RSU", "amount": "credit_amount * tt_rate"},
+            {"credit": "4104", "credit_name": "RSU Perquisite", "amount": "credit_amount * tt_rate"}
+          ],
+          "note": "CRITICAL: Negative value in payslip = credit when RSUs vest",
+          "requires_correlation": "rsu_vests"
+        },
+        "ESPP_DEDUCTION": {
+          "description": "ESPP payroll deduction",
+          "entries": [
+            {"debit": "1404", "debit_name": "US Brokerage Cash"},
+            {"credit": "1101", "credit_name": "Bank - Savings"}
+          ],
+          "note": "Accumulates for periodic ESPP purchase"
+        }
+      }
+    },
+
+    "salary/form16.py": {
+      "sink_table": "form16_records",
+      "transaction_types": {
+        "ANNUAL_SALARY_SUMMARY": {
+          "description": "Form 16 annual salary summary (verification only)",
+          "entries": [],
+          "note": "Form 16 is summary document - individual entries from payslips",
+          "use_for": "verification",
+          "cross_reference": "salary_records"
+        }
+      }
+    },
+
+    "salary/form12ba.py": {
+      "sink_table": "perquisites",
+      "transaction_types": {
+        "RSU_PERQUISITE": {
+          "description": "RSU/ESOP perquisite from Form 12BA",
+          "entries": [
+            {"debit": "1401", "debit_name": "US Stocks - RSU"},
+            {"credit": "4104", "credit_name": "RSU Perquisite"}
+          ],
+          "note": "Taxable value = FMV at vest × shares × TT rate",
+          "requires_correlation": "rsu_vests"
+        },
+        "ESPP_DISCOUNT": {
+          "description": "ESPP discount perquisite",
+          "entries": [
+            {"debit": "1402", "debit_name": "US Stocks - ESPP"},
+            {"credit": "4105", "credit_name": "ESPP Perquisite"}
+          ],
+          "note": "Taxable = (FMV - Purchase Price) × shares × TT rate"
+        },
+        "EMPLOYER_PF_EXCESS": {
+          "description": "Employer PF contribution excess over 7.5L",
+          "entries": [
+            {"debit": "1302", "debit_name": "EPF - Employer"},
+            {"credit": "4106", "credit_name": "Other Perquisites"}
+          ],
+          "taxable_above": 750000
+        },
+        "INTEREST_ACCRETION": {
+          "description": "Interest accretion on taxable employer contribution",
+          "entries": [
+            {"debit": "1302", "debit_name": "EPF - Employer"},
+            {"credit": "4106", "credit_name": "Other Perquisites"}
+          ]
+        }
+      }
+    },
+
+    "assets/rental.py": {
+      "sink_table": "rental_income",
+      "reference_tables": ["properties", "home_loan_interest"],
+      "transaction_types": {
+        "RENTAL_INCOME": {
+          "description": "Monthly rental income receipt",
+          "entries": [
+            {"debit": "1101", "debit_name": "Bank - Savings"},
+            {"credit": "4401", "credit_name": "Gross Rental Income"}
+          ],
+          "deductions": {
+            "standard_deduction": {"rate": 0.30, "account": "5203"},
+            "municipal_tax": {"account": "5204"},
+            "home_loan_interest": {"account": "5105", "max_self_occupied": 200000}
+          },
+          "idempotency_fields": ["property_id", "financial_year", "month", "gross_rent"]
+        },
+        "MUNICIPAL_TAX": {
+          "description": "Municipal tax payment",
+          "entries": [
+            {"debit": "5204", "debit_name": "Municipal Tax"},
+            {"credit": "1101", "credit_name": "Bank - Savings"}
+          ]
+        },
+        "HOME_LOAN_INTEREST": {
+          "description": "Home loan interest payment (Section 24)",
+          "entries": [
+            {"debit": "5105", "debit_name": "Section 24 - HP Interest"},
+            {"credit": "1101", "credit_name": "Bank - Savings"}
+          ],
+          "max_deduction": {
+            "let_out": "unlimited",
+            "self_occupied": 200000
+          }
+        }
+      }
+    },
+
+    "foreign/rsu.py": {
+      "sink_table": "rsu_vests",
+      "reference_tables": ["rsu_sales"],
+      "transaction_types": {
+        "VEST": {
+          "description": "RSU vesting event",
+          "entries": [
+            {"debit": "1401", "debit_name": "US Stocks - RSU", "amount": "perquisite_inr"},
+            {"credit": "4108", "credit_name": "Foreign Salary Income", "amount": "perquisite_inr"}
+          ],
+          "calculation": "perquisite_inr = shares_vested × fmv_usd × sbi_tt_rate",
+          "creates_lot": true,
+          "cost_basis": "fmv_usd × tt_rate",
+          "idempotency_fields": ["grant_number", "vest_date", "shares_vested", "fmv_usd"]
+        },
+        "SALE": {
+          "description": "RSU sale",
+          "entries": [
+            {"debit": "1101", "debit_name": "Bank - Savings", "amount": "proceeds_inr"},
+            {"credit": "1401", "credit_name": "US Stocks - RSU", "amount": "cost_basis_inr"},
+            {"credit": "4305", "credit_name": "LTCG - Foreign 12.5%", "amount": "gain", "condition": "is_ltcg=true AND gain > 0"},
+            {"credit": "4304", "credit_name": "STCG - Foreign", "amount": "gain", "condition": "is_ltcg=false AND gain > 0"},
+            {"debit": "4308", "debit_name": "Realized Capital Loss", "amount": "abs(gain)", "condition": "gain < 0"}
+          ],
+          "ltcg_threshold_months": 24,
+          "requires_cost_basis": true,
+          "depletes_lot": true,
+          "forex_gain_loss": "embedded in capital_gain via different TT rates"
+        }
+      }
+    },
+
+    "foreign/espp.py": {
+      "sink_table": "espp_purchases",
+      "transaction_types": {
+        "PURCHASE": {
+          "description": "ESPP share purchase",
+          "entries": [
+            {"debit": "1402", "debit_name": "US Stocks - ESPP", "amount": "market_value_inr"},
+            {"credit": "1101", "credit_name": "Bank - Savings", "amount": "purchase_value_inr"},
+            {"credit": "4105", "credit_name": "ESPP Perquisite", "amount": "discount_inr"}
+          ],
+          "calculation": {
+            "market_value_inr": "shares × market_price_usd × tt_rate",
+            "purchase_value_inr": "shares × purchase_price_usd × tt_rate",
+            "discount_inr": "market_value_inr - purchase_value_inr"
+          },
+          "creates_lot": true,
+          "cost_basis": "market_price_usd × tt_rate",
+          "note": "Discount taxed as perquisite, cost basis = FMV"
+        },
+        "SALE": {
+          "description": "ESPP share sale",
+          "entries": [
+            {"debit": "1101", "debit_name": "Bank - Savings", "amount": "proceeds_inr"},
+            {"credit": "1402", "credit_name": "US Stocks - ESPP", "amount": "cost_basis_inr"},
+            {"credit": "4305", "credit_name": "LTCG - Foreign 12.5%", "condition": "is_ltcg=true AND gain > 0"},
+            {"credit": "4304", "credit_name": "STCG - Foreign", "condition": "is_ltcg=false AND gain > 0"}
+          ],
+          "ltcg_threshold_months": 24
+        }
+      }
+    },
+
+    "foreign/dividend.py": {
+      "sink_table": "foreign_dividends",
+      "transaction_types": {
+        "DIVIDEND": {
+          "description": "Foreign dividend with DTAA credit",
+          "entries": [
+            {"debit": "1101", "debit_name": "Bank - Savings", "amount": "net_dividend_inr"},
+            {"debit": "1604", "debit_name": "Foreign Tax Credit", "amount": "withholding_inr"},
+            {"credit": "4204", "credit_name": "Dividend - Foreign", "amount": "gross_dividend_inr"}
+          ],
+          "calculation": {
+            "gross_dividend_inr": "gross_dividend_usd × tt_rate",
+            "withholding_inr": "withholding_usd × tt_rate",
+            "net_dividend_inr": "gross_dividend_inr - withholding_inr"
+          },
+          "dtaa_credit": {
+            "country": "USA",
+            "max_rate": 0.25,
+            "indian_tax_relief": "min(us_tax, indian_tax_on_dividend)"
+          }
+        }
+      }
+    },
+
+    "base.py": {
+      "sink_table": "staging_raw",
+      "reference_tables": ["staging_normalized"],
+      "note": "Staging tables for raw data ingestion pipeline",
+      "transaction_types": {
+        "RAW_INGEST": {
+          "description": "Raw data ingestion (no ledger entry)",
+          "entries": [],
+          "note": "Staging only - ledger entries created during normalization"
+        }
+      }
+    },
+
+    "mf/ingester.py": {
+      "sink_table": "ingestion_log",
+      "note": "Ingestion log tracking, delegates to CAMS/Karvy parsers",
+      "transaction_types": {}
+    }
+  },
+
+  "account_code_reference": {
+    "assets": {
+      "1101": "Bank - Savings",
+      "1102": "Bank - Current",
+      "1103": "Bank - FD",
+      "1201": "Mutual Funds - Equity",
+      "1202": "Mutual Funds - Debt",
+      "1203": "Indian Stocks",
+      "1204": "SGB",
+      "1205": "RBI Bonds",
+      "1301": "EPF - Employee",
+      "1302": "EPF - Employer",
+      "1303": "PPF",
+      "1304": "NPS - Tier I",
+      "1305": "NPS - Tier II",
+      "1401": "US Stocks - RSU",
+      "1402": "US Stocks - ESPP",
+      "1403": "US Stocks - DRIP",
+      "1404": "US Brokerage Cash",
+      "1502": "Real Estate",
+      "1601": "TDS Receivable",
+      "1602": "TCS Receivable",
+      "1603": "Advance Tax Paid",
+      "1604": "Foreign Tax Credit"
+    },
+    "income": {
+      "4100": "Salary Income",
+      "4104": "RSU Perquisite",
+      "4105": "ESPP Perquisite",
+      "4106": "Other Perquisites",
+      "4107": "Employer PF Contribution",
+      "4108": "Foreign Salary Income",
+      "4201": "Bank Interest",
+      "4202": "FD Interest",
+      "4203": "Dividend - Indian",
+      "4204": "Dividend - Foreign",
+      "4205": "EPF Interest",
+      "4206": "PPF Interest",
+      "4207": "SGB Interest",
+      "4301": "STCG - Equity 20%",
+      "4302": "LTCG - Equity 12.5%",
+      "4303": "CG - Debt (Slab)",
+      "4304": "STCG - Foreign",
+      "4305": "LTCG - Foreign 12.5%",
+      "4306": "Forex Gain/Loss",
+      "4307": "Realized Capital Gain",
+      "4308": "Realized Capital Loss",
+      "4401": "Gross Rental Income"
+    },
+    "expenses": {
+      "5101": "Section 80C",
+      "5102": "Section 80D",
+      "5103": "Section 80CCD(1B)",
+      "5105": "Section 24 - HP Interest",
+      "5106": "Standard Deduction 16(ia)",
+      "5201": "STT Paid",
+      "5202": "Brokerage",
+      "5203": "Rental Standard Deduction",
+      "5204": "Municipal Tax",
+      "5205": "Forex Loss",
+      "5301": "Professional Tax Paid",
+      "5302": "Income Tax Expense",
+      "5303": "Other Salary Deductions"
+    }
+  },
+
+  "validation_rules": {
+    "salary_balance_check": {
+      "equation": "gross_salary == net_pay + tds + epf + professional_tax + other_deductions",
+      "tolerance": 1.00,
+      "error": "AccountingBalanceError"
+    },
+    "journal_balance_check": {
+      "equation": "sum(debits) == sum(credits)",
+      "tolerance": 0.01,
+      "error": "UnbalancedJournalError"
+    },
+    "cost_basis_sync": {
+      "check": "cost_basis_lots.total_units == holdings.quantity",
+      "tolerance": 0.01,
+      "error": "AccountingBalanceError"
+    }
+  },
+
+  "idempotency_key_format": {
+    "pattern": "{asset_type}:{file_hash}:{row_idx}:{unique_fields}",
+    "examples": [
+      "mf:a1b2c3d4:5:INF123:2024-03-15:10000:100.5",
+      "bank:e5f6g7h8:12:2024-03-15:NEFT123:5000",
+      "stock:i9j0k1l2:3:RELIANCE:2024-03-15:10:BUY",
+      "salary:m3n4o5p6:0:QUALCOMM:2024-03:85000",
+      "epf:uan_hash:Mar-2024:1800:1800",
+      "rsu:grant123:2024-03-15:100:175.50"
+    ]
+  },
+
+  "currency_conversion": {
+    "default_currency": "INR",
+    "foreign_currencies": ["USD"],
+    "rate_source": "SBI TT Buying Rate",
+    "rate_table": "exchange_rates",
+    "rate_lookup_priority": [
+      "exact_date_match",
+      "nearest_prior_7_days",
+      "manual_entry"
+    ]
+  }
+}

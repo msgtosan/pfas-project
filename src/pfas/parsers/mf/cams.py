@@ -21,6 +21,15 @@ from .models import MFTransaction, MFScheme, AssetClass, TransactionType, ParseR
 from .classifier import classify_scheme
 from .capital_gains import CapitalGainsCalculator
 
+# Ledger integration imports
+from pfas.core.transaction_service import TransactionService, TransactionSource
+from pfas.parsers.ledger_integration import (
+    record_mf_purchase,
+    record_mf_redemption,
+    record_mf_switch,
+    record_mf_dividend,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -497,14 +506,14 @@ class CAMSParser:
 
     def save_to_db(self, result: ParseResult, user_id: int = None) -> int:
         """
-        Save parsed MF transactions to database.
+        Save parsed MF transactions to database with double-entry ledger.
 
         Process:
         1. Get or create AMC
         2. Get or create scheme
         3. Get or create folio
-        4. Insert transactions
-        5. Calculate and save capital gains
+        4. Record to ledger via TransactionService
+        5. Insert transactions to mf_transactions for compatibility
 
         Args:
             result: ParseResult from parsing
@@ -524,12 +533,15 @@ class CAMSParser:
         cursor = self.conn.cursor()
         in_transaction = self.conn.in_transaction
 
+        # Initialize TransactionService for ledger entries
+        txn_service = TransactionService(self.conn)
+
         try:
             if not in_transaction:
                 cursor.execute("BEGIN IMMEDIATE")
 
             count = 0
-            for txn in result.transactions:
+            for row_idx, txn in enumerate(result.transactions):
                 # Get or create AMC
                 amc_id = self._get_or_create_amc(txn.scheme.amc_name)
 
@@ -541,7 +553,21 @@ class CAMSParser:
                     user_id, scheme_id, txn.folio_number
                 )
 
-                # Insert transaction
+                # Record to double-entry ledger
+                ledger_result = self._record_to_ledger(
+                    txn_service, user_id, txn, result.source_file, row_idx
+                )
+
+                # Skip if duplicate in ledger
+                if ledger_result.is_duplicate:
+                    self._duplicate_count += 1
+                    logger.debug(
+                        f"Duplicate transaction skipped (ledger): {txn.scheme.name} "
+                        f"on {txn.date.isoformat()} for {txn.amount}"
+                    )
+                    continue
+
+                # Insert to mf_transactions for backward compatibility
                 if self._insert_transaction(folio_id, txn, result.source_file, user_id):
                     count += 1
 
@@ -554,6 +580,161 @@ class CAMSParser:
             if not in_transaction:
                 self.conn.rollback()
             raise Exception(f"Failed to save MF transactions: {e}") from e
+
+    def _record_to_ledger(
+        self,
+        txn_service: TransactionService,
+        user_id: int,
+        txn: MFTransaction,
+        source_file: str,
+        row_idx: int
+    ):
+        """
+        Record MF transaction to double-entry ledger.
+
+        Args:
+            txn_service: TransactionService instance
+            user_id: User ID
+            txn: MFTransaction to record
+            source_file: Source file path
+            row_idx: Row index in source file
+
+        Returns:
+            LedgerRecordResult
+        """
+        from pfas.parsers.ledger_integration import LedgerRecordResult
+
+        is_equity = txn.scheme.asset_class == AssetClass.EQUITY
+
+        # Handle different transaction types
+        if txn.transaction_type == TransactionType.PURCHASE:
+            return record_mf_purchase(
+                txn_service=txn_service,
+                conn=self.conn,
+                user_id=user_id,
+                folio_number=txn.folio_number,
+                scheme_name=txn.scheme.name,
+                txn_date=txn.date,
+                amount=abs(txn.amount),
+                units=abs(txn.units),
+                is_equity=is_equity,
+                source_file=source_file,
+                row_idx=row_idx,
+                source=TransactionSource.PARSER_CAMS,
+            )
+
+        elif txn.transaction_type == TransactionType.REDEMPTION:
+            # Calculate cost basis from purchase info if available
+            cost_basis = txn.purchase_amount or (txn.purchase_units * txn.purchase_nav if txn.purchase_units and txn.purchase_nav else abs(txn.amount))
+
+            return record_mf_redemption(
+                txn_service=txn_service,
+                conn=self.conn,
+                user_id=user_id,
+                folio_number=txn.folio_number,
+                scheme_name=txn.scheme.name,
+                txn_date=txn.date,
+                proceeds=abs(txn.amount),
+                cost_basis=cost_basis,
+                units=abs(txn.units),
+                is_equity=is_equity,
+                is_long_term=txn.is_long_term,
+                source_file=source_file,
+                row_idx=row_idx,
+                stt=txn.stt,
+                source=TransactionSource.PARSER_CAMS,
+            )
+
+        elif txn.transaction_type in (TransactionType.SWITCH_IN, TransactionType.SWITCH_OUT):
+            # For switch transactions, record as purchase (switch-in) or redemption (switch-out)
+            if txn.transaction_type == TransactionType.SWITCH_IN:
+                return record_mf_purchase(
+                    txn_service=txn_service,
+                    conn=self.conn,
+                    user_id=user_id,
+                    folio_number=txn.folio_number,
+                    scheme_name=txn.scheme.name,
+                    txn_date=txn.date,
+                    amount=abs(txn.amount),
+                    units=abs(txn.units),
+                    is_equity=is_equity,
+                    source_file=source_file,
+                    row_idx=row_idx,
+                    source=TransactionSource.PARSER_CAMS,
+                )
+            else:
+                cost_basis = txn.purchase_amount or abs(txn.amount)
+                return record_mf_redemption(
+                    txn_service=txn_service,
+                    conn=self.conn,
+                    user_id=user_id,
+                    folio_number=txn.folio_number,
+                    scheme_name=txn.scheme.name,
+                    txn_date=txn.date,
+                    proceeds=abs(txn.amount),
+                    cost_basis=cost_basis,
+                    units=abs(txn.units),
+                    is_equity=is_equity,
+                    is_long_term=txn.is_long_term,
+                    source_file=source_file,
+                    row_idx=row_idx,
+                    stt=txn.stt,
+                    source=TransactionSource.PARSER_CAMS,
+                )
+
+        elif txn.transaction_type in (TransactionType.DIVIDEND, TransactionType.DIVIDEND_REINVEST, TransactionType.DIVIDEND_PAYOUT):
+            is_reinvested = txn.transaction_type == TransactionType.DIVIDEND_REINVEST
+            return record_mf_dividend(
+                txn_service=txn_service,
+                conn=self.conn,
+                user_id=user_id,
+                folio_number=txn.folio_number,
+                scheme_name=txn.scheme.name,
+                txn_date=txn.date,
+                amount=abs(txn.amount) if txn.amount else abs(txn.units * txn.nav),
+                is_reinvested=is_reinvested,
+                is_equity=is_equity,
+                source_file=source_file,
+                row_idx=row_idx,
+                source=TransactionSource.PARSER_CAMS,
+            )
+
+        else:
+            # For other transaction types, treat as purchase if units > 0, else redemption
+            if txn.units > 0:
+                return record_mf_purchase(
+                    txn_service=txn_service,
+                    conn=self.conn,
+                    user_id=user_id,
+                    folio_number=txn.folio_number,
+                    scheme_name=txn.scheme.name,
+                    txn_date=txn.date,
+                    amount=abs(txn.amount),
+                    units=abs(txn.units),
+                    is_equity=is_equity,
+                    source_file=source_file,
+                    row_idx=row_idx,
+                    source=TransactionSource.PARSER_CAMS,
+                )
+            else:
+                cost_basis = txn.purchase_amount or abs(txn.amount)
+                return record_mf_redemption(
+                    txn_service=txn_service,
+                    conn=self.conn,
+                    user_id=user_id,
+                    folio_number=txn.folio_number,
+                    scheme_name=txn.scheme.name,
+                    txn_date=txn.date,
+                    proceeds=abs(txn.amount),
+                    cost_basis=cost_basis,
+                    units=abs(txn.units),
+                    is_equity=is_equity,
+                    is_long_term=txn.is_long_term,
+                    source_file=source_file,
+                    row_idx=row_idx,
+                    stt=txn.stt,
+                    source=TransactionSource.PARSER_CAMS,
+                )
 
     def _get_or_create_amc(self, amc_name: str) -> int:
         """Get or create AMC and return ID."""

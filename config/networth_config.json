@@ -1,0 +1,237 @@
+{
+  "version": "1.0.0",
+  "description": "Networth Report Configuration - PFAS",
+
+  "asset_categories": {
+    "mutual_funds": {
+      "enabled": true,
+      "label": "Mutual Funds",
+      "sub_categories": {
+        "MF-Equity": {"label": "Equity MF", "table": "mf_holdings", "filter": "asset_class = 'EQUITY'"},
+        "MF-Debt": {"label": "Debt MF", "table": "mf_holdings", "filter": "asset_class = 'DEBT'"},
+        "MF-Hybrid": {"label": "Hybrid MF", "table": "mf_holdings", "filter": "asset_class = 'HYBRID'"},
+        "MF-Gold-ETF": {"label": "Gold ETF", "table": "mf_holdings", "filter": "scheme_name LIKE '%Gold%'"},
+        "MF-International": {"label": "International MF", "table": "mf_holdings", "filter": "scheme_name LIKE '%US%' OR scheme_name LIKE '%Nasdaq%' OR scheme_name LIKE '%International%'"},
+        "MF-Liquid": {"label": "Liquid MF", "table": "mf_holdings", "filter": "scheme_name LIKE '%Liquid%' OR scheme_name LIKE '%Money Market%'"},
+        "MF-Arbitrage": {"label": "Arbitrage MF", "table": "mf_holdings", "filter": "scheme_name LIKE '%Arbitrage%'"}
+      },
+      "value_column": "current_value",
+      "cost_column": "cost_value",
+      "date_column": "nav_date"
+    },
+    "indian_stocks": {
+      "enabled": true,
+      "label": "Indian Stocks",
+      "table": "stock_holdings",
+      "value_column": "market_value",
+      "cost_column": "total_cost_basis",
+      "date_column": "as_of_date"
+    },
+    "usa_stocks": {
+      "enabled": true,
+      "label": "USA Stocks (RSU/ESPP)",
+      "tables": {
+        "rsu": "rsu_vests",
+        "espp": "espp_purchases",
+        "holdings": "foreign_holdings"
+      },
+      "value_column": "total_value_usd",
+      "requires_forex": true
+    },
+    "epf": {
+      "enabled": true,
+      "label": "Employee Provident Fund",
+      "table": "epf_transactions",
+      "balance_columns": ["employee_balance", "employer_balance"],
+      "date_column": "transaction_date"
+    },
+    "ppf": {
+      "enabled": true,
+      "label": "Public Provident Fund",
+      "table": "ppf_transactions",
+      "balance_column": "balance",
+      "date_column": "transaction_date"
+    },
+    "nps": {
+      "enabled": true,
+      "label": "National Pension System",
+      "table": "nps_transactions",
+      "value_column": "units",
+      "nav_column": "nav",
+      "date_column": "transaction_date"
+    },
+    "sgb": {
+      "enabled": true,
+      "label": "Sovereign Gold Bond",
+      "table": "sgb_holdings",
+      "value_column": "current_value",
+      "cost_column": "investment_amount",
+      "date_column": "valuation_date"
+    },
+    "rbi_bonds": {
+      "enabled": true,
+      "label": "RBI Floating Rate Bonds",
+      "table": "rbi_bond_holdings",
+      "value_column": "current_value",
+      "cost_column": "investment_amount",
+      "date_column": "valuation_date"
+    },
+    "company_fd": {
+      "enabled": true,
+      "label": "Company Fixed Deposits",
+      "table": "company_fd_holdings",
+      "value_column": "maturity_value",
+      "cost_column": "principal_amount",
+      "date_column": "maturity_date"
+    },
+    "reit": {
+      "enabled": true,
+      "label": "REITs",
+      "table": "stock_holdings",
+      "filter": "symbol IN ('EMBASSY', 'MINDSPACE', 'BROOKFIELD')",
+      "value_column": "market_value",
+      "cost_column": "total_cost_basis",
+      "date_column": "as_of_date"
+    },
+    "dividends_india": {
+      "enabled": true,
+      "label": "Dividend Income (India)",
+      "tables": {
+        "stock": "stock_dividends",
+        "mf": "mf_transactions"
+      },
+      "income_type": true,
+      "filter_mf": "transaction_type = 'DIVIDEND'"
+    },
+    "rental_income": {
+      "enabled": true,
+      "label": "Rental Income",
+      "table": "rental_income",
+      "income_type": true,
+      "date_column": "income_date"
+    }
+  },
+
+  "time_granularity": {
+    "monthly": {
+      "label": "Monthly",
+      "format": "%Y-%m",
+      "periods_per_year": 12
+    },
+    "quarterly": {
+      "label": "Quarterly",
+      "format": "%Y-Q%q",
+      "periods_per_year": 4
+    },
+    "fy": {
+      "label": "Financial Year",
+      "format": "FY%Y-%y",
+      "periods_per_year": 1
+    }
+  },
+
+  "indian_fy": {
+    "start_month": 4,
+    "start_day": 1,
+    "quarters": {
+      "Q1": {"start": "04-01", "end": "06-30"},
+      "Q2": {"start": "07-01", "end": "09-30"},
+      "Q3": {"start": "10-01", "end": "12-31"},
+      "Q4": {"start": "01-01", "end": "03-31"}
+    }
+  },
+
+  "metrics": {
+    "cagr": {
+      "enabled": true,
+      "min_years": 1,
+      "formula": "((end_value / start_value) ^ (1 / years) - 1) * 100"
+    },
+    "xirr": {
+      "enabled": true,
+      "applicable_to": ["mutual_funds", "indian_stocks", "usa_stocks"],
+      "max_iterations": 100,
+      "tolerance": 1e-6
+    },
+    "absolute_return": {
+      "enabled": true,
+      "formula": "((end_value - start_value) / start_value) * 100"
+    },
+    "allocation_pct": {
+      "enabled": true
+    }
+  },
+
+  "report_settings": {
+    "excel": {
+      "sheets": [
+        {"name": "Summary", "type": "summary"},
+        {"name": "Asset Allocation", "type": "allocation_pie"},
+        {"name": "Growth Chart", "type": "growth_chart"},
+        {"name": "By Category", "type": "category_detail"},
+        {"name": "MF Details", "type": "mf_detail", "condition": "mutual_funds.enabled"},
+        {"name": "Stock Details", "type": "stock_detail", "condition": "indian_stocks.enabled"},
+        {"name": "Retirement Funds", "type": "retirement_detail", "assets": ["epf", "ppf", "nps"]},
+        {"name": "Income Summary", "type": "income_summary"},
+        {"name": "YoY Comparison", "type": "yoy_comparison"},
+        {"name": "CAGR Analysis", "type": "cagr_analysis"}
+      ],
+      "formats": {
+        "currency": "₹#,##0.00",
+        "currency_usd": "$#,##0.00",
+        "percentage": "0.00%",
+        "date": "DD-MMM-YYYY",
+        "number": "#,##0"
+      },
+      "styles": {
+        "header": {
+          "bold": true,
+          "bg_color": "#1F4E79",
+          "font_color": "#FFFFFF",
+          "alignment": "center"
+        },
+        "category_header": {
+          "bold": true,
+          "bg_color": "#2E75B6",
+          "font_color": "#FFFFFF"
+        },
+        "total_row": {
+          "bold": true,
+          "bg_color": "#D9E2F3",
+          "border": "thin"
+        },
+        "positive": {"font_color": "#006400"},
+        "negative": {"font_color": "#8B0000"}
+      },
+      "chart_settings": {
+        "growth_chart": {
+          "type": "line",
+          "width": 15,
+          "height": 10,
+          "show_legend": true,
+          "show_data_labels": false
+        },
+        "allocation_pie": {
+          "type": "pie",
+          "width": 12,
+          "height": 10,
+          "show_percentage": true
+        }
+      }
+    }
+  },
+
+  "forex": {
+    "default_rate_source": "SBI_TT_BUYING",
+    "fallback_rate": 83.50,
+    "currencies": ["USD", "EUR", "GBP"]
+  },
+
+  "defaults": {
+    "granularity": "fy",
+    "fy_range": "current",
+    "detailed": true,
+    "include_income": true,
+    "output_format": "xlsx"
+  }
+}

@@ -1,0 +1,282 @@
+{
+  "version": "1.0.0",
+  "description": "Stock Statement Analyzer Configuration - PFAS",
+
+  "brokers": {
+    "icicidirect": {
+      "name": "ICICI Direct",
+      "code": "ICICI",
+      "folder_patterns": ["ICICIDirect", "ICICI_Direct", "ICICI-Direct", "icici"],
+      "file_patterns": {
+        "holdings": ["*holding*.xlsx", "*holding*.xls", "*holding*.csv", "*demat*.xlsx"],
+        "transactions": ["*capital_gain*.xlsx", "*cg_report*.xlsx", "*trade*.xlsx", "*transaction*.xlsx", "*ProfitLoss*.xls", "*ProfitLoss*.xlsx", "*ICICIDirect_FY*.csv"]
+      },
+      "exclude_patterns": ["~$*", "*.tmp"]
+    },
+    "zerodha": {
+      "name": "Zerodha",
+      "code": "ZERODHA",
+      "folder_patterns": ["Zerodha", "Kite", "zerodha", "kite"],
+      "file_patterns": {
+        "holdings": ["*holding*.xlsx", "*holding*.csv", "*portfolio*.xlsx"],
+        "transactions": ["*taxpnl*.xlsx", "*tax_pnl*.xlsx", "*tradebook*.xlsx", "*pnl*.xlsx"]
+      },
+      "exclude_patterns": ["~$*", "*.tmp"]
+    },
+    "groww": {
+      "name": "Groww",
+      "code": "GROWW",
+      "folder_patterns": ["Groww", "groww"],
+      "file_patterns": {
+        "holdings": ["*holding*.xlsx", "*portfolio*.xlsx"],
+        "transactions": ["*capital_gain*.xlsx", "*trade*.xlsx"]
+      },
+      "exclude_patterns": ["~$*", "*.tmp"]
+    }
+  },
+
+  "statement_types": {
+    "holdings": {
+      "icicidirect": {
+        "sheets": ["Sheet1", "Holdings"],
+        "header_row": 0,
+        "skip_footer_rows": 2,
+        "file_format": "auto"
+      },
+      "zerodha": {
+        "sheets": ["Sheet1"],
+        "header_row": 22,
+        "skip_footer_rows": 0,
+        "file_format": "xlsx"
+      },
+      "groww": {
+        "sheets": ["Holdings"],
+        "header_row": 0,
+        "skip_footer_rows": 0,
+        "file_format": "xlsx"
+      }
+    },
+    "transactions": {
+      "icicidirect": {
+        "sheets": ["Sheet1"],
+        "header_row": 3,
+        "skip_footer_rows": 0,
+        "file_format": "csv_or_tsv"
+      },
+      "zerodha": {
+        "sheets": ["Equity"],
+        "header_row": 46,
+        "skip_footer_rows": 0,
+        "file_format": "xlsx",
+        "sections": {
+          "long_term": {"header_row": 46},
+          "short_term": {"header_row": 55}
+        }
+      },
+      "groww": {
+        "sheets": ["Capital Gains", "Transactions"],
+        "header_row": 0,
+        "skip_footer_rows": 0,
+        "file_format": "xlsx"
+      }
+    }
+  },
+
+  "field_mappings": {
+    "holdings": {
+      "icicidirect": {
+        "Stock Name": "company_name",
+        "Stock ISIN": "isin",
+        "Allocated Quantity": "quantity_held",
+        "Blocked for Trade": "quantity_blocked_trade",
+        "Block For Margin": "quantity_pledged",
+        "Current Market Price": "current_price",
+        "% Change": "price_change_pct",
+        "Market Value": "market_value"
+      },
+      "zerodha": {
+        "Symbol": "symbol",
+        "ISIN": "isin",
+        "Sector": "sector",
+        "Quantity Available": "quantity_held",
+        "Quantity Discrepant": "quantity_discrepant",
+        "Quantity Long Term": "quantity_lt",
+        "Quantity Pledged (Margin)": "quantity_pledged_margin",
+        "Quantity Pledged (Loan)": "quantity_pledged_loan",
+        "Average Price": "average_buy_price",
+        "Previous Closing Price": "current_price",
+        "Unrealized P&L": "unrealized_pnl",
+        "Unrealized P&L Pct.": "unrealized_pnl_pct"
+      },
+      "groww": {
+        "Stock Name": "company_name",
+        "Symbol": "symbol",
+        "ISIN": "isin",
+        "Quantity": "quantity_held",
+        "Average Cost": "average_buy_price",
+        "LTP": "current_price",
+        "Current Value": "market_value",
+        "P&L": "unrealized_pnl",
+        "P&L %": "unrealized_pnl_pct"
+      }
+    },
+    "transactions": {
+      "icicidirect": {
+        "Stock Symbol": "symbol",
+        "ISIN": "isin",
+        "Qty": "quantity",
+        "Sale Date": "sell_date",
+        "Sale Rate": "sell_price",
+        "Sale Value": "sell_value",
+        "Sale Expenses": "sell_expenses",
+        "Purchase Date": "buy_date",
+        "Purchase Rate": "buy_price",
+        "Price as on 31st Jan 2018": "fmv_31jan2018",
+        "Purchase Price Considered": "grandfathered_price",
+        "Purchase Value": "buy_value",
+        "Purchase Expenses": "buy_expenses",
+        "Profit/Loss(-)": "profit_loss"
+      },
+      "zerodha": {
+        "Symbol": "symbol",
+        "ISIN": "isin",
+        "Entry Date": "buy_date",
+        "Exit Date": "sell_date",
+        "Quantity": "quantity",
+        "Buy Value": "buy_value",
+        "Sell Value": "sell_value",
+        "Profit": "profit_loss",
+        "Period of Holding": "holding_period_days",
+        "Fair Market Value": "fmv_31jan2018",
+        "Taxable Profit": "taxable_profit",
+        "Turnover": "turnover"
+      },
+      "groww": {
+        "Stock Symbol": "symbol",
+        "ISIN": "isin",
+        "Buy Date": "buy_date",
+        "Sell Date": "sell_date",
+        "Quantity": "quantity",
+        "Buy Price": "buy_price",
+        "Sell Price": "sell_price",
+        "Buy Value": "buy_value",
+        "Sell Value": "sell_value",
+        "Brokerage": "brokerage",
+        "Profit/Loss": "profit_loss",
+        "Holding Period (Days)": "holding_period_days"
+      }
+    }
+  },
+
+  "broker_detection": {
+    "keywords": {
+      "icicidirect": ["ICICI Direct", "ICICIdirect", "I-Sec", "ISEC", "ICICI Securities"],
+      "zerodha": ["Zerodha", "Kite", "NSE:ZERODHA"],
+      "groww": ["Groww", "Nextbillion", "Groww Invest"]
+    },
+    "column_signatures": {
+      "icicidirect": ["Block For Margin", "Price as on 31st Jan 2018", "Short Term Capital Gain"],
+      "zerodha": ["Unrealized P&L Pct.", "Quantity Discrepant", "Period of Holding"],
+      "groww": ["LTP", "Current Value", "P&L %"]
+    }
+  },
+
+  "value_transforms": {
+    "quantity": {
+      "type": "integer",
+      "remove_chars": [",", " "]
+    },
+    "price_fields": {
+      "type": "decimal",
+      "precision": 2,
+      "remove_chars": ["₹", "Rs.", "Rs", ",", " ", "INR"]
+    },
+    "percentage_fields": {
+      "type": "decimal",
+      "precision": 2,
+      "remove_chars": ["%", " "]
+    },
+    "date_fields": {
+      "type": "date",
+      "formats": ["dd-MMM-yyyy", "yyyy-MM-dd", "dd/MM/yyyy", "MM/dd/yyyy", "dd-MM-yyyy"]
+    }
+  },
+
+  "capital_gains_rules": {
+    "ltcg_threshold_days": 365,
+    "ltcg_exemption_limit": 125000,
+    "ltcg_tax_rate": 0.125,
+    "stcg_tax_rate": 0.20,
+    "grandfathering_date": "2018-01-31",
+    "grandfathering_applicable_from": "2018-04-01",
+    "index_cost_inflation": {
+      "2017-18": 272,
+      "2018-19": 280,
+      "2019-20": 289,
+      "2020-21": 301,
+      "2021-22": 317,
+      "2022-23": 331,
+      "2023-24": 348,
+      "2024-25": 363,
+      "2025-26": 380
+    }
+  },
+
+  "indian_fy_quarters": {
+    "Q1": {"start": "04-01", "end": "06-15", "label": "Q1 (Apr 1 - Jun 15)"},
+    "Q2": {"start": "06-16", "end": "09-15", "label": "Q2 (Jun 16 - Sep 15)"},
+    "Q3": {"start": "09-16", "end": "12-15", "label": "Q3 (Sep 16 - Dec 15)"},
+    "Q4": {"start": "12-16", "end": "03-15", "label": "Q4 (Dec 16 - Mar 15)"},
+    "Q5": {"start": "03-16", "end": "03-31", "label": "Q5 (Mar 16 - Mar 31)"}
+  },
+
+  "report_settings": {
+    "excel": {
+      "enabled": true,
+      "sheets": [
+        {"name": "Portfolio Summary", "type": "summary"},
+        {"name": "Holdings Detail", "type": "holdings"},
+        {"name": "Sector Allocation", "type": "sector_allocation"},
+        {"name": "Transactions", "type": "transactions"},
+        {"name": "Capital Gains - FY", "type": "capital_gains_fy"},
+        {"name": "Capital Gains - Quarterly", "type": "capital_gains_quarterly"},
+        {"name": "XIRR Performance", "type": "xirr"},
+        {"name": "Dividend Summary", "type": "dividends"}
+      ],
+      "formats": {
+        "currency": "₹#,##0.00",
+        "percentage": "0.00%",
+        "date": "DD-MMM-YYYY",
+        "quantity": "#,##0"
+      },
+      "header_style": {
+        "bold": true,
+        "bg_color": "#4472C4",
+        "font_color": "#FFFFFF"
+      }
+    },
+    "csv": {
+      "enabled": false,
+      "delimiter": ",",
+      "encoding": "utf-8"
+    }
+  },
+
+  "processing": {
+    "scan_recursive": true,
+    "include_archive": false,
+    "skip_zero_holdings": true,
+    "detect_duplicates": true,
+    "duplicate_key": ["user_id", "isin", "buy_date", "sell_date", "quantity"],
+    "calculate_xirr": true,
+    "calculate_cagr": true,
+    "include_pledged_in_holdings": true,
+    "merge_split_adjustments": true
+  },
+
+  "logging": {
+    "level": "INFO",
+    "file": "logs/stock_analyzer.log",
+    "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  }
+}

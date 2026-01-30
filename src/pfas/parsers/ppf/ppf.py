@@ -9,6 +9,14 @@ from dataclasses import dataclass, field
 from typing import List, Optional
 import sqlite3
 
+# Ledger integration imports
+from pfas.core.transaction_service import TransactionService, TransactionSource
+from pfas.parsers.ledger_integration import (
+    record_ppf_deposit,
+    record_ppf_interest,
+    record_ppf_withdrawal,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -336,7 +344,7 @@ class PPFParser:
 
     def save_to_db(self, result: ParseResult, user_id: Optional[int] = None) -> int:
         """
-        Save parsed PPF data to database.
+        Save parsed PPF data to database with double-entry ledger.
 
         Args:
             result: ParseResult from parsing
@@ -356,6 +364,9 @@ class PPFParser:
         cursor = self.conn.cursor()
         in_transaction = self.conn.in_transaction
 
+        # Initialize TransactionService for ledger entries
+        txn_service = TransactionService(self.conn)
+
         try:
             if not in_transaction:
                 cursor.execute("BEGIN IMMEDIATE")
@@ -363,9 +374,20 @@ class PPFParser:
             # Get or create PPF account
             ppf_account_id = self._get_or_create_account(result.account, user_id)
 
-            # Insert transactions
+            # Insert transactions with ledger entries
             count = 0
-            for txn in result.transactions:
+            for row_idx, txn in enumerate(result.transactions):
+                # Record to double-entry ledger based on transaction type
+                ledger_result = self._record_to_ledger(
+                    txn_service, user_id, result.account, txn, result.source_file, row_idx
+                )
+
+                # Skip if duplicate
+                if ledger_result.is_duplicate:
+                    logger.debug(f"Duplicate PPF transaction skipped: {txn.date}")
+                    continue
+
+                # Insert to ppf_transactions for backward compatibility
                 if self._insert_transaction(ppf_account_id, txn, result.source_file, user_id):
                     count += 1
 
@@ -378,6 +400,72 @@ class PPFParser:
             if not in_transaction:
                 self.conn.rollback()
             raise Exception(f"Failed to save PPF data: {e}") from e
+
+    def _record_to_ledger(
+        self,
+        txn_service: TransactionService,
+        user_id: int,
+        account: PPFAccount,
+        txn: PPFTransaction,
+        source_file: str,
+        row_idx: int
+    ):
+        """
+        Record PPF transaction to double-entry ledger.
+
+        Args:
+            txn_service: TransactionService instance
+            user_id: User ID
+            account: PPFAccount
+            txn: PPFTransaction to record
+            source_file: Source file path
+            row_idx: Row index
+
+        Returns:
+            LedgerRecordResult
+        """
+        if txn.transaction_type == 'DEPOSIT':
+            return record_ppf_deposit(
+                txn_service=txn_service,
+                conn=self.conn,
+                user_id=user_id,
+                account_number=account.account_number,
+                txn_date=txn.date,
+                amount=txn.amount,
+                source_file=source_file,
+                row_idx=row_idx,
+                source=TransactionSource.PARSER_PPF,
+            )
+        elif txn.transaction_type == 'INTEREST':
+            return record_ppf_interest(
+                txn_service=txn_service,
+                conn=self.conn,
+                user_id=user_id,
+                account_number=account.account_number,
+                txn_date=txn.date,
+                amount=txn.amount,
+                financial_year=txn.financial_year,
+                source_file=source_file,
+                row_idx=row_idx,
+                source=TransactionSource.PARSER_PPF,
+            )
+        elif txn.transaction_type == 'WITHDRAWAL':
+            return record_ppf_withdrawal(
+                txn_service=txn_service,
+                conn=self.conn,
+                user_id=user_id,
+                account_number=account.account_number,
+                txn_date=txn.date,
+                amount=txn.amount,
+                source_file=source_file,
+                row_idx=row_idx,
+                source=TransactionSource.PARSER_PPF,
+            )
+        else:
+            # Unknown transaction type
+            from pfas.parsers.ledger_integration import LedgerRecordResult
+            logger.warning(f"Unknown PPF transaction type: {txn.transaction_type}")
+            return LedgerRecordResult(success=True, is_duplicate=False)
 
     def _get_or_create_account(self, account: PPFAccount, user_id: Optional[int]) -> int:
         """Get or create PPF account and return ID."""

@@ -1,0 +1,25 @@
+{
+  "transactions_keywords": [
+    "txn", "transaction", "transactions", "trade", "trades",
+    "buy", "sell", "redemption", "switch", "dividend",
+    "capital_gain", "capital-gain", "capitalgain", "cg",
+    "p&l", "pnl", "profit", "tax_statement", "tax-statement",
+    "purchase", "sale", "transfer", "allotment"
+  ],
+  "holdings_keywords": [
+    "holding", "holdings", "portfolio", "consolidated",
+    "summary", "valuation", "current_value", "current-value",
+    "snapshot", "position", "positions", "balance",
+    "as on", "as of", "current nav", "market value"
+  ],
+  "file_overrides": {},
+  "transactions_folders": [
+    "transactions", "txn", "trades", "capital_gains"
+  ],
+  "holdings_folders": [
+    "holdings", "portfolio", "valuation", "snapshot"
+  ],
+  "default_type": "transactions",
+  "min_content_confidence": 0.6,
+  "_comment": "Statement type detection rules. User overrides in Users/<user>/config/statement_rules.json"
+}

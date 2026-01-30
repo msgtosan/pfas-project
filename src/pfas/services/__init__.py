@@ -9,6 +9,8 @@ Provides services for:
 - Balance Sheet: Balance sheet snapshot generation
 - Portfolio Valuation: Holdings valuation and XIRR
 - Liabilities: Loan and liability management
+- NAV Service: Mutual fund NAV history with interpolation
+- Batch Ingester: Atomic batch file ingestion
 """
 
 from .tax_rules_service import TaxRulesService, TaxSlab, CapitalGainsRate
@@ -19,6 +21,9 @@ from .cash_flow_service import CashFlowStatementService
 from .balance_sheet_service import BalanceSheetService
 from .portfolio_valuation_service import PortfolioValuationService, PortfolioSummary, XIRRResult
 from .liabilities_service import LiabilitiesService, LoanSummary, AmortizationEntry
+from .nav_service import NAVService, NAVRecord
+from .batch_ingester import BatchIngester, BatchResult, FileResult, FileStatus
+from .cost_basis_tracker import CostBasisTracker, CostMethod, Lot, CostBasisResult, HoldingSummary
 
 __all__ = [
     # Tax Services
@@ -41,4 +46,18 @@ __all__ = [
     "LiabilitiesService",
     "LoanSummary",
     "AmortizationEntry",
+    # NAV Services
+    "NAVService",
+    "NAVRecord",
+    # Batch Ingestion
+    "BatchIngester",
+    "BatchResult",
+    "FileResult",
+    "FileStatus",
+    # Cost Basis Tracking
+    "CostBasisTracker",
+    "CostMethod",
+    "Lot",
+    "CostBasisResult",
+    "HoldingSummary",
 ]

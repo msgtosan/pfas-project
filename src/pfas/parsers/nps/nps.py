@@ -1,12 +1,21 @@
 """NPS Statement parser."""
 
 import pandas as pd
+import hashlib
 from pathlib import Path
 from datetime import date as date_type
 from decimal import Decimal, InvalidOperation
 from dataclasses import dataclass, field
 from typing import List, Optional, Dict
 import sqlite3
+
+from pfas.core.transaction_service import (
+    TransactionService,
+    TransactionSource,
+    AssetRecord,
+)
+from pfas.core.journal import JournalEntry
+from pfas.core.accounts import get_account_by_code
 
 
 @dataclass
@@ -386,7 +395,13 @@ class NPSParser:
 
     def save_to_db(self, result: ParseResult, user_id: Optional[int] = None) -> int:
         """
-        Save parsed NPS data to database.
+        Save parsed NPS data to database via TransactionService.
+
+        All inserts flow through TransactionService.record() ensuring:
+        - Idempotency (duplicate prevention)
+        - Audit logging
+        - Double-entry accounting (Dr NPS Asset | Cr Bank)
+        - Atomic transactions
 
         Args:
             result: ParseResult from parsing
@@ -403,34 +418,33 @@ class NPSParser:
         if not result.success or not result.account:
             return 0
 
-        cursor = self.conn.cursor()
-        in_transaction = self.conn.in_transaction
+        if user_id is None:
+            user_id = 1  # Default user
 
-        try:
-            if not in_transaction:
-                cursor.execute("BEGIN IMMEDIATE")
+        txn_service = TransactionService(self.conn)
+        file_hash = hashlib.sha256(result.source_file.encode()).hexdigest()[:8]
 
-            # Get or create NPS account
-            nps_account_id = self._get_or_create_account(result.account, user_id)
+        # Get or create NPS account via TransactionService
+        nps_account_id = self._get_or_create_account_via_service(
+            txn_service, result.account, user_id
+        )
 
-            # Insert transactions
-            count = 0
-            for txn in result.transactions:
-                if self._insert_transaction(nps_account_id, txn, result.source_file, user_id):
-                    count += 1
+        # Insert transactions
+        count = 0
+        for idx, txn in enumerate(result.transactions):
+            if self._record_transaction(txn_service, nps_account_id, txn, result.source_file, file_hash, idx, user_id):
+                count += 1
 
-            if not in_transaction:
-                self.conn.commit()
+        return count
 
-            return count
-
-        except Exception as e:
-            if not in_transaction:
-                self.conn.rollback()
-            raise Exception(f"Failed to save NPS data: {e}") from e
-
-    def _get_or_create_account(self, account: NPSAccount, user_id: Optional[int]) -> int:
-        """Get or create NPS account and return ID."""
+    def _get_or_create_account_via_service(
+        self,
+        txn_service: TransactionService,
+        account: NPSAccount,
+        user_id: int
+    ) -> int:
+        """Get or create NPS account via TransactionService."""
+        # Check if account exists
         cursor = self.conn.execute(
             "SELECT id FROM nps_accounts WHERE pran = ?",
             (account.pran,)
@@ -438,48 +452,135 @@ class NPSParser:
         row = cursor.fetchone()
 
         if row:
-            return row['id']
+            return row['id'] if isinstance(row, dict) else row[0]
 
-        cursor = self.conn.execute(
-            """INSERT INTO nps_accounts
-            (user_id, pran, nodal_office, scheme_preference, opening_date)
-            VALUES (?, ?, ?, ?, ?)""",
-            (
-                user_id,
-                account.pran,
-                account.nodal_office,
-                account.scheme_preference,
-                account.opening_date.isoformat() if account.opening_date else None
-            )
+        # Create via TransactionService
+        idempotency_key = f"nps_account:{account.pran}"
+
+        asset_record = AssetRecord(
+            table_name="nps_accounts",
+            data={
+                "user_id": user_id,
+                "pran": account.pran,
+                "nodal_office": account.nodal_office,
+                "scheme_preference": account.scheme_preference,
+                "opening_date": account.opening_date.isoformat() if account.opening_date else None,
+            },
+            on_conflict="IGNORE"
         )
-        return cursor.lastrowid
 
-    def _insert_transaction(self, nps_account_id: int, txn: NPSTransaction,
-                           source_file: str, user_id: Optional[int]) -> bool:
-        """Insert NPS transaction into database."""
-        try:
-            self.conn.execute(
-                """INSERT INTO nps_transactions
-                (nps_account_id, transaction_date, transaction_type, tier,
-                 contribution_type, amount, units, nav, scheme, financial_year,
-                 source_file, user_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    nps_account_id,
-                    txn.date.isoformat(),
-                    txn.transaction_type,
-                    txn.tier,
-                    txn.contribution_type,
-                    str(txn.amount),
-                    str(txn.units),
-                    str(txn.nav),
-                    txn.scheme,
-                    txn.financial_year,
-                    source_file,
-                    user_id
-                )
-            )
-            return True
-        except sqlite3.IntegrityError:
-            # Duplicate transaction
-            return False
+        result = txn_service.record_asset_only(
+            user_id=user_id,
+            asset_records=[asset_record],
+            idempotency_key=idempotency_key,
+            source=TransactionSource.PARSER_NPS,
+            description=f"NPS account: {account.pran}",
+        )
+
+        if result.asset_record_ids.get("nps_accounts"):
+            return result.asset_record_ids["nps_accounts"]
+
+        # If insert was ignored, fetch existing
+        cursor = self.conn.execute(
+            "SELECT id FROM nps_accounts WHERE pran = ?",
+            (account.pran,)
+        )
+        row = cursor.fetchone()
+        return row['id'] if isinstance(row, dict) else row[0] if row else 0
+
+    def _record_transaction(
+        self,
+        txn_service: TransactionService,
+        nps_account_id: int,
+        txn: NPSTransaction,
+        source_file: str,
+        file_hash: str,
+        row_idx: int,
+        user_id: int
+    ) -> bool:
+        """
+        Record NPS transaction via TransactionService with journal entry.
+
+        For CONTRIBUTION:
+            Dr NPS Asset (1304/1305)  | Amount
+            Cr Bank Account (1101)    | Amount
+        """
+        # Generate idempotency key
+        idempotency_key = f"nps:{file_hash}:{row_idx}:{txn.pran}:{txn.date.isoformat()}:{txn.amount}"
+
+        # Create journal entries
+        entries = self._create_journal_entries(txn, user_id)
+
+        # Create asset record
+        asset_record = AssetRecord(
+            table_name="nps_transactions",
+            data={
+                "nps_account_id": nps_account_id,
+                "transaction_date": txn.date.isoformat(),
+                "transaction_type": txn.transaction_type,
+                "tier": txn.tier,
+                "contribution_type": txn.contribution_type,
+                "amount": str(txn.amount),
+                "units": str(txn.units),
+                "nav": str(txn.nav),
+                "scheme": txn.scheme,
+                "financial_year": txn.financial_year,
+                "source_file": source_file,
+                "user_id": user_id,
+            },
+            on_conflict="IGNORE"
+        )
+
+        # Record via TransactionService
+        description = f"NPS {txn.transaction_type}: Tier {txn.tier} - {txn.amount}"
+        result = txn_service.record(
+            user_id=user_id,
+            entries=entries,
+            description=description[:100],
+            source=TransactionSource.PARSER_NPS,
+            idempotency_key=idempotency_key,
+            txn_date=txn.date,
+            reference_type=f"NPS_{txn.transaction_type}",
+            asset_records=[asset_record],
+        )
+
+        return result.result.value == "success"
+
+    def _create_journal_entries(self, txn: NPSTransaction, user_id: int) -> List[JournalEntry]:
+        """Create journal entries for NPS transaction."""
+        entries = []
+
+        # Get account IDs - Tier I is 1304, Tier II is 1305
+        nps_account_code = "1304" if txn.tier == "I" else "1305"
+        nps_account = get_account_by_code(self.conn, nps_account_code)
+        bank_account = get_account_by_code(self.conn, "1101")  # Bank - Savings
+
+        if not nps_account or not bank_account:
+            return entries
+
+        if txn.transaction_type == "CONTRIBUTION":
+            # Dr NPS Asset | Cr Bank
+            entries.append(JournalEntry(
+                account_id=nps_account.id,
+                debit=txn.amount,
+                narration=f"NPS Tier {txn.tier} contribution: {txn.contribution_type}"
+            ))
+            entries.append(JournalEntry(
+                account_id=bank_account.id,
+                credit=txn.amount,
+                narration=f"Payment to NPS"
+            ))
+        elif txn.transaction_type == "REDEMPTION":
+            # Dr Bank | Cr NPS Asset
+            entries.append(JournalEntry(
+                account_id=bank_account.id,
+                debit=txn.amount,
+                narration=f"NPS Tier {txn.tier} withdrawal"
+            ))
+            entries.append(JournalEntry(
+                account_id=nps_account.id,
+                credit=txn.amount,
+                narration=f"NPS withdrawal"
+            ))
+
+        return entries

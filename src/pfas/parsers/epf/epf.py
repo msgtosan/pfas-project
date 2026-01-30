@@ -12,6 +12,13 @@ from dataclasses import dataclass, field
 from typing import List, Optional
 import sqlite3
 
+# Ledger integration imports
+from pfas.core.transaction_service import TransactionService, TransactionSource
+from pfas.parsers.ledger_integration import (
+    record_epf_contribution,
+    record_epf_interest,
+)
+
 
 @dataclass
 class EPFAccount:
@@ -377,7 +384,7 @@ class EPFParser:
 
     def save_to_db(self, result: ParseResult, user_id: Optional[int] = None) -> int:
         """
-        Save parsed EPF data to database.
+        Save parsed EPF data to database with double-entry ledger.
 
         Args:
             result: ParseResult from parsing
@@ -397,6 +404,9 @@ class EPFParser:
         cursor = self.conn.cursor()
         in_transaction = self.conn.in_transaction
 
+        # Initialize TransactionService for ledger entries
+        txn_service = TransactionService(self.conn)
+
         try:
             if not in_transaction:
                 cursor.execute("BEGIN IMMEDIATE")
@@ -404,14 +414,28 @@ class EPFParser:
             # Get or create EPF account
             epf_account_id = self._get_or_create_account(result.account, user_id)
 
-            # Insert transactions
+            # Insert transactions with ledger entries
             count = 0
-            for txn in result.transactions:
+            for row_idx, txn in enumerate(result.transactions):
+                # Record to double-entry ledger based on transaction type
+                ledger_result = self._record_to_ledger(
+                    txn_service, user_id, result.account, txn, result.source_file, row_idx
+                )
+
+                # Skip if duplicate
+                if ledger_result.is_duplicate:
+                    logger.debug(f"Duplicate EPF transaction skipped: {txn.wage_month}")
+                    continue
+
+                # Insert to epf_transactions for backward compatibility
                 if self._insert_transaction(epf_account_id, txn, result.source_file, user_id):
                     count += 1
 
-            # Insert interest if available
+            # Insert interest if available and record to ledger
             if result.interest:
+                self._record_interest_to_ledger(
+                    txn_service, user_id, result.account, result.interest, result.source_file
+                )
                 self._insert_interest(epf_account_id, result.interest, user_id)
 
             if not in_transaction:
@@ -423,6 +447,88 @@ class EPFParser:
             if not in_transaction:
                 self.conn.rollback()
             raise Exception(f"Failed to save EPF data: {e}") from e
+
+    def _record_to_ledger(
+        self,
+        txn_service: TransactionService,
+        user_id: int,
+        account: EPFAccount,
+        txn: EPFTransaction,
+        source_file: str,
+        row_idx: int
+    ):
+        """
+        Record EPF transaction to double-entry ledger.
+
+        Args:
+            txn_service: TransactionService instance
+            user_id: User ID
+            account: EPFAccount
+            txn: EPFTransaction to record
+            source_file: Source file path
+            row_idx: Row index
+
+        Returns:
+            LedgerRecordResult
+        """
+        from pfas.parsers.ledger_integration import LedgerRecordResult
+
+        if txn.transaction_type == 'CR':
+            # Contribution
+            return record_epf_contribution(
+                txn_service=txn_service,
+                conn=self.conn,
+                user_id=user_id,
+                uan=account.uan,
+                wage_month=txn.wage_month,
+                employee_contribution=txn.employee_contribution,
+                employer_contribution=txn.employer_contribution,
+                txn_date=txn.transaction_date,
+                source_file=source_file,
+                row_idx=row_idx,
+                source=TransactionSource.PARSER_EPF,
+            )
+        elif txn.transaction_type == 'INT':
+            # Interest - record through interest function
+            # This shouldn't normally happen in transactions list
+            # Interest is usually in separate interest field
+            return LedgerRecordResult(success=True, is_duplicate=False)
+        else:
+            # DR (Debit/Withdrawal) - not common in passbook
+            # Skip for now or handle as special case
+            return LedgerRecordResult(success=True, is_duplicate=False)
+
+    def _record_interest_to_ledger(
+        self,
+        txn_service: TransactionService,
+        user_id: int,
+        account: EPFAccount,
+        interest: EPFInterest,
+        source_file: str
+    ):
+        """Record EPF interest to double-entry ledger."""
+        from pfas.parsers.ledger_integration import LedgerRecordResult
+
+        # Determine transaction date from financial year end
+        # FY "2024-2025" -> March 31, 2025
+        try:
+            fy_end_year = int(interest.financial_year.split('-')[1])
+            txn_date = date_type(fy_end_year, 3, 31)
+        except:
+            txn_date = date_type.today()
+
+        return record_epf_interest(
+            txn_service=txn_service,
+            conn=self.conn,
+            user_id=user_id,
+            uan=account.uan,
+            financial_year=interest.financial_year,
+            employee_interest=interest.employee_interest,
+            employer_interest=interest.employer_interest,
+            txn_date=txn_date,
+            source_file=source_file,
+            source=TransactionSource.PARSER_EPF,
+        )
 
     def _get_or_create_account(self, account: EPFAccount, user_id: Optional[int]) -> int:
         """Get or create EPF account and return ID."""

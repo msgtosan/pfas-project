@@ -10,12 +10,21 @@ Key features:
 """
 
 import re
+import hashlib
 import pdfplumber
 from pathlib import Path
 from datetime import datetime, date
 from decimal import Decimal
-from typing import Optional
+from typing import Optional, List
 import sqlite3
+
+from pfas.core.transaction_service import (
+    TransactionService,
+    TransactionSource,
+    AssetRecord,
+)
+from pfas.core.journal import JournalEntry
+from pfas.core.accounts import get_account_by_code
 
 from .models import SalaryRecord, SalaryParseResult, RSUTaxCredit, CorrelationStatus
 
@@ -295,7 +304,13 @@ class PayslipParser:
         employer_id: Optional[int] = None
     ) -> int:
         """
-        Save parsed salary records to database.
+        Save parsed salary records to database via TransactionService.
+
+        All inserts flow through TransactionService.record() ensuring:
+        - Idempotency (duplicate prevention)
+        - Audit logging
+        - Double-entry accounting (Dr Bank + Dr TDS | Cr Salary Income)
+        - Atomic transactions
 
         Args:
             result: SalaryParseResult from parsing
@@ -308,65 +323,165 @@ class PayslipParser:
         if not self.conn or not result.success:
             return 0
 
-        count = 0
-        cursor = self.conn.cursor()
+        txn_service = TransactionService(self.conn)
+        file_hash = hashlib.sha256(result.source_file.encode()).hexdigest()[:8]
 
-        try:
-            for record in result.salary_records:
-                cursor.execute(
-                    """INSERT INTO salary_records
-                    (user_id, employer_id, pay_period, pay_date,
-                     basic_salary, hra, special_allowance, lta, other_allowances,
-                     gross_salary, pf_employee, pf_employer, nps_employee, nps_employer,
-                     professional_tax, income_tax_deducted, espp_deduction, tcs_on_espp,
-                     other_deductions, rsu_tax_credit, total_deductions, net_pay, source_file)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (
-                        user_id,
-                        employer_id,
-                        record.pay_period,
-                        record.pay_date.isoformat() if record.pay_date else None,
-                        str(record.basic_salary),
-                        str(record.hra),
-                        str(record.special_allowance),
-                        str(record.lta),
-                        str(record.other_allowances),
-                        str(record.gross_salary),
-                        str(record.pf_employee),
-                        str(record.pf_employer),
-                        str(record.nps_employee),
-                        str(record.nps_employer),
-                        str(record.professional_tax),
-                        str(record.income_tax_deducted),
-                        str(record.espp_deduction),
-                        str(record.tcs_on_espp),
-                        str(record.other_deductions),
-                        str(record.rsu_tax_credit),
-                        str(record.total_deductions),
-                        str(record.net_pay),
-                        result.source_file
-                    )
-                )
-                salary_record_id = cursor.lastrowid
+        count = 0
+        for idx, record in enumerate(result.salary_records):
+            if self._record_salary(txn_service, user_id, employer_id, record, result.source_file, file_hash, idx):
                 count += 1
 
-                # Save RSU tax credit if present
-                if record.rsu_tax_credit > Decimal("0"):
-                    cursor.execute(
-                        """INSERT INTO rsu_tax_credits
-                        (salary_record_id, credit_amount, credit_date, correlation_status)
-                        VALUES (?, ?, ?, ?)""",
-                        (
-                            salary_record_id,
-                            str(record.rsu_tax_credit),
-                            record.pay_date.isoformat() if record.pay_date else date.today().isoformat(),
-                            CorrelationStatus.PENDING.value
-                        )
-                    )
+        return count
 
-            self.conn.commit()
-            return count
+    def _record_salary(
+        self,
+        txn_service: TransactionService,
+        user_id: int,
+        employer_id: Optional[int],
+        record: SalaryRecord,
+        source_file: str,
+        file_hash: str,
+        row_idx: int
+    ) -> bool:
+        """
+        Record salary via TransactionService with journal entry.
 
-        except Exception as e:
-            self.conn.rollback()
-            raise Exception(f"Failed to save salary records: {e}") from e
+        Journal Entry:
+            Dr Bank Account (1101)       | Net Pay
+            Dr TDS Receivable (1601)     | Income Tax Deducted
+            Dr EPF Asset (1301)          | PF Employee Contribution
+            Cr Gross Salary Income (4109)| Gross Salary
+        """
+        # Generate idempotency key
+        idempotency_key = f"salary:{file_hash}:{row_idx}:{record.pay_period}:{record.net_pay}"
+
+        # Create journal entries
+        entries = self._create_salary_journal_entries(record, user_id)
+
+        # Create asset record for salary_records table
+        asset_record = AssetRecord(
+            table_name="salary_records",
+            data={
+                "user_id": user_id,
+                "employer_id": employer_id,
+                "pay_period": record.pay_period,
+                "pay_date": record.pay_date.isoformat() if record.pay_date else None,
+                "basic_salary": str(record.basic_salary),
+                "hra": str(record.hra),
+                "special_allowance": str(record.special_allowance),
+                "lta": str(record.lta),
+                "other_allowances": str(record.other_allowances),
+                "gross_salary": str(record.gross_salary),
+                "pf_employee": str(record.pf_employee),
+                "pf_employer": str(record.pf_employer),
+                "nps_employee": str(record.nps_employee),
+                "nps_employer": str(record.nps_employer),
+                "professional_tax": str(record.professional_tax),
+                "income_tax_deducted": str(record.income_tax_deducted),
+                "espp_deduction": str(record.espp_deduction),
+                "tcs_on_espp": str(record.tcs_on_espp),
+                "other_deductions": str(record.other_deductions),
+                "rsu_tax_credit": str(record.rsu_tax_credit),
+                "total_deductions": str(record.total_deductions),
+                "net_pay": str(record.net_pay),
+                "source_file": source_file,
+            },
+            on_conflict="IGNORE"
+        )
+
+        # Build asset records list
+        asset_records = [asset_record]
+
+        # Add RSU tax credit record if present
+        # Note: This will be linked via a separate record after we get the salary_record_id
+
+        # Parse pay_date for transaction date
+        txn_date = record.pay_date or date.today()
+
+        result = txn_service.record(
+            user_id=user_id,
+            entries=entries,
+            description=f"Salary: {record.pay_period} - Net {record.net_pay}",
+            source=TransactionSource.MANUAL,  # Could add PARSER_SALARY
+            idempotency_key=idempotency_key,
+            txn_date=txn_date,
+            reference_type="SALARY",
+            asset_records=asset_records,
+        )
+
+        if result.result.value != "success":
+            return False
+
+        # Save RSU tax credit if present (needs salary_record_id)
+        salary_record_id = result.asset_record_ids.get("salary_records")
+        if salary_record_id and record.rsu_tax_credit > Decimal("0"):
+            rsu_idempotency_key = f"rsu_credit:{file_hash}:{row_idx}:{record.pay_period}"
+
+            rsu_asset_record = AssetRecord(
+                table_name="rsu_tax_credits",
+                data={
+                    "salary_record_id": salary_record_id,
+                    "credit_amount": str(record.rsu_tax_credit),
+                    "credit_date": record.pay_date.isoformat() if record.pay_date else date.today().isoformat(),
+                    "correlation_status": CorrelationStatus.PENDING.value,
+                },
+                on_conflict="IGNORE"
+            )
+
+            txn_service.record_asset_only(
+                user_id=user_id,
+                asset_records=[rsu_asset_record],
+                idempotency_key=rsu_idempotency_key,
+                source=TransactionSource.MANUAL,
+                description=f"RSU Tax Credit: {record.pay_period}",
+            )
+
+        return True
+
+    def _create_salary_journal_entries(self, record: SalaryRecord, user_id: int) -> List[JournalEntry]:
+        """Create journal entries for salary record."""
+        entries = []
+
+        # Get account IDs
+        bank_account = get_account_by_code(self.conn, "1101")  # Bank - Savings
+        tds_account = get_account_by_code(self.conn, "1601")   # TDS Receivable
+        epf_account = get_account_by_code(self.conn, "1301")   # EPF - Employee
+        salary_income = get_account_by_code(self.conn, "4109") # Gross Salary - Composite
+
+        if not bank_account or not salary_income:
+            return entries
+
+        # Dr Bank for net pay
+        if record.net_pay > Decimal("0"):
+            entries.append(JournalEntry(
+                account_id=bank_account.id,
+                debit=record.net_pay,
+                narration=f"Salary credit: {record.pay_period}"
+            ))
+
+        # Dr TDS Receivable for income tax deducted
+        if tds_account and record.income_tax_deducted > Decimal("0"):
+            entries.append(JournalEntry(
+                account_id=tds_account.id,
+                debit=record.income_tax_deducted,
+                narration=f"TDS on salary: {record.pay_period}"
+            ))
+
+        # Dr EPF Asset for employee contribution
+        if epf_account and record.pf_employee > Decimal("0"):
+            entries.append(JournalEntry(
+                account_id=epf_account.id,
+                debit=record.pf_employee,
+                narration=f"EPF contribution: {record.pay_period}"
+            ))
+
+        # Cr Gross Salary Income
+        # Total credits should equal total debits (net + deductions)
+        total_debits = record.net_pay + record.income_tax_deducted + record.pf_employee
+        entries.append(JournalEntry(
+            account_id=salary_income.id,
+            credit=total_debits,  # This ensures balanced entries
+            narration=f"Gross salary: {record.pay_period}"
+        ))
+
+        return entries

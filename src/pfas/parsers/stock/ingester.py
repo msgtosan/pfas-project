@@ -1,7 +1,9 @@
 """Indian Stock Statement Ingester."""
 
 import logging
+import hashlib
 from pathlib import Path
+from decimal import Decimal
 from typing import List, Optional, Dict, Any
 
 try:
@@ -12,6 +14,13 @@ except ImportError:
 from pfas.services.generic_ingester import GenericAssetIngester, GenericIngestionResult
 from .zerodha import ZerodhaParser
 from .icici import ICICIDirectParser
+
+# Ledger integration imports
+from pfas.core.transaction_service import TransactionService, TransactionSource, AssetRecord
+from pfas.parsers.ledger_integration import (
+    record_stock_buy,
+    record_stock_sell,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -116,66 +125,179 @@ class IndianStockIngester(GenericAssetIngester):
             logger.warning(f"Failed to parse generic holdings: {e}")
             return []
 
-    def save_to_db(self, records: List[Any]) -> int:
-        """Save stock holdings/trades to database."""
+    def save_to_db(self, records: List[Any], source_file: str = "") -> int:
+        """
+        Save stock holdings/trades to database with double-entry ledger.
+
+        All inserts flow through TransactionService ensuring:
+        - Idempotency (duplicate prevention)
+        - Audit logging
+        - Double-entry accounting (for trades)
+        - Atomic transactions
+
+        Args:
+            records: List of stock records (holdings or trades)
+            source_file: Path to source file for idempotency
+
+        Returns:
+            Number of records saved
+        """
         if not records:
             return 0
 
+        # Initialize TransactionService for ledger entries
+        txn_service = TransactionService(self.conn)
+        file_hash = hashlib.sha256(source_file.encode()).hexdigest()[:8]
+
         inserted = 0
-        for item in records:
+        for row_idx, item in enumerate(records):
             try:
                 # Determine if it's a holding or trade
-                if 'quantity' in item:
-                    # It's a holding
-                    self.conn.execute(
-                        """
-                        INSERT OR REPLACE INTO stock_holdings
-                        (user_id, symbol, quantity, buy_price, current_price,
-                         broker, source_file, updated_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-                        """,
-                        (
-                            self.user_id,
-                            item.get('symbol'),
-                            item.get('quantity', 0),
-                            item.get('buy_price', 0),
-                            item.get('current_price', 0),
-                            item.get('broker', 'Generic'),
-                            str(item.get('source_file', ''))
-                        )
-                    )
-                else:
-                    # It's a trade
-                    self.conn.execute(
-                        """
-                        INSERT OR IGNORE INTO stock_transactions
-                        (user_id, symbol, trade_date, transaction_type, quantity,
-                         price, amount, broker, source_file, created_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-                        """,
-                        (
-                            self.user_id,
-                            item.get('symbol'),
-                            item.get('trade_date'),
-                            item.get('transaction_type', 'BUY'),
-                            item.get('quantity', 0),
-                            item.get('price', 0),
-                            item.get('amount', 0),
-                            item.get('broker', 'Generic'),
-                            str(item.get('source_file', ''))
-                        )
+                if 'quantity' in item and 'trade_date' not in item:
+                    # It's a holding - holdings don't create journal entries
+                    # They represent current state, not transactions
+                    symbol = item.get('symbol', '')
+                    idempotency_key = f"stock_holding:{file_hash}:{row_idx}:{symbol}"
+
+                    asset_record = AssetRecord(
+                        table_name="stock_holdings",
+                        data={
+                            "user_id": self.user_id,
+                            "symbol": symbol,
+                            "quantity": item.get('quantity', 0),
+                            "buy_price": item.get('buy_price', 0),
+                            "current_price": item.get('current_price', 0),
+                            "broker": item.get('broker', 'Generic'),
+                            "source_file": str(item.get('source_file', source_file)),
+                        },
+                        on_conflict="REPLACE"
                     )
 
-                inserted += 1
+                    result = txn_service.record_asset_only(
+                        user_id=self.user_id,
+                        asset_records=[asset_record],
+                        idempotency_key=idempotency_key,
+                        source=self._get_transaction_source(item.get('broker', 'Generic')),
+                        description=f"Stock holding: {symbol}",
+                    )
+
+                    if result.result.value == "success":
+                        inserted += 1
+
+                else:
+                    # It's a trade - record to ledger
+                    symbol = item.get('symbol', '')
+                    trade_date = item.get('trade_date')
+                    txn_type = item.get('transaction_type', 'BUY').upper()
+                    quantity = int(item.get('quantity', 0))
+                    price = Decimal(str(item.get('price', 0)))
+                    amount = Decimal(str(item.get('amount', 0))) or (price * quantity)
+                    broker = item.get('broker', 'Generic')
+                    trade_id = item.get('trade_id', '')
+                    brokerage = Decimal(str(item.get('brokerage', 0)))
+                    stt = Decimal(str(item.get('stt', 0)))
+                    cost_basis = Decimal(str(item.get('cost_basis', amount)))
+                    is_long_term = item.get('is_long_term', False)
+
+                    # Parse trade_date if string
+                    if isinstance(trade_date, str):
+                        import pandas as pd
+                        trade_date = pd.to_datetime(trade_date).date()
+
+                    # Determine source based on broker
+                    source = self._get_transaction_source(broker)
+
+                    # Record to ledger (creates journal entries)
+                    if txn_type == 'BUY':
+                        ledger_result = record_stock_buy(
+                            txn_service=txn_service,
+                            conn=self.conn,
+                            user_id=self.user_id,
+                            symbol=symbol,
+                            txn_date=trade_date,
+                            quantity=quantity,
+                            price=price,
+                            amount=amount,
+                            brokerage=brokerage,
+                            source_file=source_file or str(item.get('source_file', '')),
+                            row_idx=row_idx,
+                            broker=broker,
+                            trade_id=trade_id,
+                            source=source,
+                        )
+                    else:  # SELL
+                        ledger_result = record_stock_sell(
+                            txn_service=txn_service,
+                            conn=self.conn,
+                            user_id=self.user_id,
+                            symbol=symbol,
+                            txn_date=trade_date,
+                            quantity=quantity,
+                            price=price,
+                            proceeds=amount,
+                            cost_basis=cost_basis,
+                            brokerage=brokerage,
+                            stt=stt,
+                            is_long_term=is_long_term,
+                            source_file=source_file or str(item.get('source_file', '')),
+                            row_idx=row_idx,
+                            broker=broker,
+                            trade_id=trade_id,
+                            source=source,
+                        )
+
+                    # Skip if duplicate in ledger
+                    if ledger_result.is_duplicate:
+                        logger.debug(f"Duplicate stock transaction skipped: {symbol} {txn_type}")
+                        continue
+
+                    # Insert to stock_transactions via AssetRecord for backward compatibility
+                    txn_idempotency_key = f"stock_txn:{file_hash}:{row_idx}:{symbol}:{txn_type}"
+
+                    asset_record = AssetRecord(
+                        table_name="stock_transactions",
+                        data={
+                            "user_id": self.user_id,
+                            "symbol": symbol,
+                            "trade_date": trade_date.isoformat() if hasattr(trade_date, 'isoformat') else str(trade_date),
+                            "transaction_type": txn_type,
+                            "quantity": quantity,
+                            "price": str(price),
+                            "amount": str(amount),
+                            "broker": broker,
+                            "source_file": str(item.get('source_file', source_file)),
+                        },
+                        on_conflict="IGNORE"
+                    )
+
+                    txn_service.record_asset_only(
+                        user_id=self.user_id,
+                        asset_records=[asset_record],
+                        idempotency_key=txn_idempotency_key,
+                        source=source,
+                        description=f"Stock {txn_type}: {symbol}",
+                    )
+                    inserted += 1
 
             except sqlite3.IntegrityError:
                 # Duplicate, skip
                 pass
             except Exception as e:
                 logger.warning(f"Failed to insert record: {e}")
+                logger.debug(f"Record data: {item}")
 
         self.conn.commit()
         return inserted
+
+    def _get_transaction_source(self, broker: str) -> TransactionSource:
+        """Get transaction source based on broker."""
+        broker_upper = broker.upper()
+        if 'ZERODHA' in broker_upper:
+            return TransactionSource.PARSER_ZERODHA
+        elif 'ICICI' in broker_upper:
+            return TransactionSource.PARSER_ICICI
+        else:
+            return TransactionSource.PARSER_ZERODHA  # Default
 
 
 def ingest_indian_stocks(

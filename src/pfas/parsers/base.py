@@ -1,10 +1,10 @@
 """Base parser infrastructure with plugin registration and normalization pipeline.
 
 This module provides:
-1. BaseParser - Abstract base class for all parsers
+1. BaseParser - Abstract base class for all parsers with ledger integration
 2. ParserRegistry - Plugin registration and discovery
 3. StrictOpenXMLConverter - Handle ISO 29500 Strict format Excel files
-4. NormalizationPipeline - Staging and normalization flow
+4. NormalizationPipeline - Staging and normalization flow via TransactionService
 """
 
 from abc import ABC, abstractmethod
@@ -19,6 +19,14 @@ import tempfile
 import sqlite3
 import logging
 import hashlib
+
+from pfas.core.transaction_service import (
+    TransactionService,
+    TransactionSource,
+    AssetRecord,
+    IdempotencyKeyGenerator,
+)
+from pfas.core.journal import JournalEntry
 
 logger = logging.getLogger(__name__)
 
@@ -156,17 +164,38 @@ class BaseParser(ABC):
     1. validate() - Check file validity
     2. parse_raw() - Extract raw records
     3. normalize() - Convert to NormalizedTransaction
+    4. _store_normalized() - Record via TransactionService
 
     Subclasses must implement:
     - parse_raw(): Extract source-specific data
     - normalize_record(): Convert single record to normalized format
     - get_source_type(): Return parser identifier
     - get_supported_formats(): Return list of supported extensions
+
+    Ledger Integration:
+    - All storage goes through TransactionService.record()
+    - Idempotency keys generated from row checksums
+    - Journal entries created for financial transactions
     """
 
-    def __init__(self, db_connection: sqlite3.Connection):
-        """Initialize parser with database connection."""
+    def __init__(
+        self,
+        db_connection: sqlite3.Connection,
+        transaction_service: TransactionService = None,
+        user_id: int = 1
+    ):
+        """
+        Initialize parser with database connection and optional TransactionService.
+
+        Args:
+            db_connection: Database connection
+            transaction_service: Optional TransactionService for ledger integration.
+                               If not provided, one will be created.
+            user_id: User ID for audit logging (default: 1)
+        """
         self.conn = db_connection
+        self.transaction_service = transaction_service or TransactionService(db_connection)
+        self.user_id = user_id
         self._converter = StrictOpenXMLConverter()
 
     @abstractmethod
@@ -274,9 +303,146 @@ class BaseParser(ABC):
         return result
 
     def _store_normalized(self, raw: ParsedRecord, normalized: Dict[str, Any]):
-        """Store normalized record in staging table."""
-        # Will be implemented when staging tables are created
-        pass
+        """
+        Store normalized record via TransactionService.
+
+        Uses the row checksum as basis for idempotency key to prevent duplicates.
+        Creates journal entries if the normalized data represents a financial transaction.
+
+        Args:
+            raw: ParsedRecord with source data and checksum
+            normalized: Normalized data dictionary
+        """
+        # Generate idempotency key from row checksum
+        idempotency_key = IdempotencyKeyGenerator.from_checksum(
+            source_type=raw.source_type,
+            checksum=raw.checksum,
+            row_index=raw.row_index
+        )
+
+        # Determine transaction date
+        txn_date = normalized.get('date')
+        if isinstance(txn_date, str):
+            try:
+                txn_date = datetime.strptime(txn_date, '%Y-%m-%d').date()
+            except:
+                txn_date = date.today()
+        elif not isinstance(txn_date, date):
+            txn_date = date.today()
+
+        # Create journal entries if this is a financial transaction
+        entries = self._create_journal_entries(normalized)
+
+        # Prepare extra data as JSON
+        extra_data = {k: v for k, v in normalized.items()
+                      if k not in ('date', 'amount', 'transaction_type', 'asset_category',
+                                  'asset_identifier', 'asset_name', 'quantity', 'unit_price',
+                                  'activity_type', 'flow_direction', 'source_type')}
+
+        # Create asset record for staging_normalized table
+        asset_record = AssetRecord(
+            table_name="staging_normalized",
+            data={
+                "staging_raw_id": None,  # Will be set if raw record exists
+                "transaction_date": txn_date.isoformat() if txn_date else None,
+                "amount": float(normalized.get('amount', 0)),
+                "transaction_type": normalized.get('transaction_type'),
+                "asset_category": normalized.get('asset_category'),
+                "asset_identifier": normalized.get('asset_identifier', ''),
+                "asset_name": normalized.get('asset_name', ''),
+                "quantity": float(normalized.get('quantity')) if normalized.get('quantity') else None,
+                "unit_price": float(normalized.get('unit_price')) if normalized.get('unit_price') else None,
+                "activity_type": normalized.get('activity_type'),
+                "flow_direction": normalized.get('flow_direction'),
+                "source_type": raw.source_type,
+                "extra_data": json.dumps(extra_data, default=str),
+                "user_id": self.user_id,
+            },
+            on_conflict="IGNORE"
+        )
+
+        # Store raw record first via TransactionService
+        raw_idempotency_key = f"raw:{raw.source_type}:{raw.checksum}"
+        raw_asset_record = AssetRecord(
+            table_name="staging_raw",
+            data={
+                "source_type": raw.source_type,
+                "source_file": raw.source_file,
+                "raw_data": json.dumps(raw.raw_data, default=str),
+                "row_index": raw.row_index,
+                "checksum": raw.checksum,
+            },
+            on_conflict="IGNORE"
+        )
+
+        # Record raw data first
+        raw_result = self.transaction_service.record_asset_only(
+            user_id=self.user_id,
+            asset_records=[raw_asset_record],
+            idempotency_key=raw_idempotency_key,
+            source=self._get_transaction_source(),
+            description=f"Raw record: {raw.source_type} row {raw.row_index}",
+        )
+
+        # Update staging_raw_id if raw record was created
+        if raw_result.asset_record_ids.get("staging_raw"):
+            asset_record.data["staging_raw_id"] = raw_result.asset_record_ids["staging_raw"]
+
+        # Record normalized data with journal entries
+        description = f"{raw.source_type}: {normalized.get('asset_name', 'Transaction')}"
+        self.transaction_service.record(
+            user_id=self.user_id,
+            entries=entries,
+            description=description[:100],
+            source=self._get_transaction_source(),
+            idempotency_key=idempotency_key,
+            txn_date=txn_date,
+            reference_type=normalized.get('transaction_type', 'NORMALIZED'),
+            asset_records=[asset_record],
+        )
+
+    def _create_journal_entries(self, normalized: Dict[str, Any]) -> List[JournalEntry]:
+        """
+        Create journal entries for normalized transaction.
+
+        Override in subclasses for specific accounting logic.
+        Default implementation returns empty list (no journal entries).
+
+        Args:
+            normalized: Normalized data dictionary
+
+        Returns:
+            List of JournalEntry objects
+        """
+        # Default: no journal entries
+        # Subclasses should override for specific asset types
+        return []
+
+    def _get_transaction_source(self) -> TransactionSource:
+        """
+        Get TransactionSource enum for this parser.
+
+        Override in subclasses for specific source types.
+
+        Returns:
+            TransactionSource enum value
+        """
+        source_type = self.get_source_type().upper()
+
+        # Map common source types to TransactionSource
+        source_map = {
+            "CAMS": TransactionSource.PARSER_CAMS,
+            "KARVY": TransactionSource.PARSER_KARVY,
+            "ZERODHA": TransactionSource.PARSER_ZERODHA,
+            "ICICI": TransactionSource.PARSER_ICICI,
+            "HDFC": TransactionSource.PARSER_HDFC,
+            "EPF": TransactionSource.PARSER_EPF,
+            "PPF": TransactionSource.PARSER_PPF,
+            "NPS": TransactionSource.PARSER_NPS,
+            "MORGAN_STANLEY": TransactionSource.PARSER_MORGAN_STANLEY,
+        }
+
+        return source_map.get(source_type, TransactionSource.MANUAL)
 
 
 # =============================================================================
@@ -534,85 +700,115 @@ class ColumnMappingConfig:
 
 class StagingPipeline:
     """
-    Manages the staging → normalization → final tables pipeline.
+    Manages the staging → normalization → final tables pipeline via TransactionService.
 
     Flow:
     1. Raw records stored in staging_raw (preserves original data)
     2. Normalization creates records in staging_normalized
     3. User context service moves to final tables with user_id
 
+    All storage operations go through TransactionService for:
+    - Idempotency (duplicate prevention)
+    - Audit logging
+    - Atomic transactions
+
     Tables:
     - staging_raw: Original parsed data as JSON
     - staging_normalized: Unified NormalizedTransaction format
     """
 
-    def __init__(self, db_connection: sqlite3.Connection):
+    def __init__(self, db_connection: sqlite3.Connection, user_id: int = 1):
         self.conn = db_connection
+        self.user_id = user_id
+        self.transaction_service = TransactionService(db_connection)
 
     def store_raw(self, record: ParsedRecord) -> int:
         """
-        Store raw record in staging_raw table.
+        Store raw record in staging_raw table via TransactionService.
 
         Args:
             record: ParsedRecord with source data
 
         Returns:
-            Record ID
+            Record ID (0 if duplicate)
         """
-        cursor = self.conn.execute("""
-            INSERT INTO staging_raw (
-                source_type, source_file, raw_data, row_index, checksum, created_at
-            ) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-            ON CONFLICT(checksum) DO NOTHING
-        """, (
-            record.source_type,
-            record.source_file,
-            json.dumps(record.raw_data, default=str),
-            record.row_index,
-            record.checksum,
-        ))
-        self.conn.commit()
-        return cursor.lastrowid or 0
+        idempotency_key = f"raw:{record.source_type}:{record.checksum}"
 
-    def store_normalized(self, raw_id: int, normalized: Dict[str, Any]) -> int:
+        asset_record = AssetRecord(
+            table_name="staging_raw",
+            data={
+                "source_type": record.source_type,
+                "source_file": record.source_file,
+                "raw_data": json.dumps(record.raw_data, default=str),
+                "row_index": record.row_index,
+                "checksum": record.checksum,
+            },
+            on_conflict="IGNORE"
+        )
+
+        result = self.transaction_service.record_asset_only(
+            user_id=self.user_id,
+            asset_records=[asset_record],
+            idempotency_key=idempotency_key,
+            source=TransactionSource.BATCH_INGESTER,
+            description=f"Raw record: {record.source_type} row {record.row_index}",
+        )
+
+        return result.asset_record_ids.get("staging_raw", 0)
+
+    def store_normalized(self, raw_id: int, normalized: Dict[str, Any], source_type: str = "") -> int:
         """
-        Store normalized record in staging_normalized table.
+        Store normalized record in staging_normalized table via TransactionService.
 
         Args:
             raw_id: ID from staging_raw table
             normalized: Normalized data dictionary
+            source_type: Source type for idempotency key
 
         Returns:
-            Record ID
+            Record ID (0 if duplicate)
         """
-        cursor = self.conn.execute("""
-            INSERT INTO staging_normalized (
-                staging_raw_id, transaction_date, amount, transaction_type,
-                asset_category, asset_identifier, asset_name,
-                quantity, unit_price, activity_type, flow_direction,
-                source_type, extra_data, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-        """, (
-            raw_id,
-            normalized.get('date'),
-            float(normalized.get('amount', 0)),
-            normalized.get('transaction_type'),
-            normalized.get('asset_category'),
-            normalized.get('asset_identifier', ''),
-            normalized.get('asset_name', ''),
-            float(normalized.get('quantity')) if normalized.get('quantity') else None,
-            float(normalized.get('unit_price')) if normalized.get('unit_price') else None,
-            normalized.get('activity_type'),
-            normalized.get('flow_direction'),
-            normalized.get('source_type'),
-            json.dumps({k: v for k, v in normalized.items()
-                       if k not in ('date', 'amount', 'transaction_type', 'asset_category',
-                                   'asset_identifier', 'asset_name', 'quantity', 'unit_price',
-                                   'activity_type', 'flow_direction', 'source_type')},
-                      default=str),
-        ))
-        self.conn.commit()
-        return cursor.lastrowid
+        # Generate idempotency key from normalized data
+        checksum = hashlib.md5(
+            json.dumps(normalized, sort_keys=True, default=str).encode()
+        ).hexdigest()
+        idempotency_key = f"normalized:{source_type}:{checksum}"
+
+        # Prepare extra data
+        extra_data = {k: v for k, v in normalized.items()
+                      if k not in ('date', 'amount', 'transaction_type', 'asset_category',
+                                  'asset_identifier', 'asset_name', 'quantity', 'unit_price',
+                                  'activity_type', 'flow_direction', 'source_type')}
+
+        asset_record = AssetRecord(
+            table_name="staging_normalized",
+            data={
+                "staging_raw_id": raw_id,
+                "transaction_date": normalized.get('date'),
+                "amount": float(normalized.get('amount', 0)),
+                "transaction_type": normalized.get('transaction_type'),
+                "asset_category": normalized.get('asset_category'),
+                "asset_identifier": normalized.get('asset_identifier', ''),
+                "asset_name": normalized.get('asset_name', ''),
+                "quantity": float(normalized.get('quantity')) if normalized.get('quantity') else None,
+                "unit_price": float(normalized.get('unit_price')) if normalized.get('unit_price') else None,
+                "activity_type": normalized.get('activity_type'),
+                "flow_direction": normalized.get('flow_direction'),
+                "source_type": normalized.get('source_type', source_type),
+                "extra_data": json.dumps(extra_data, default=str),
+            },
+            on_conflict="IGNORE"
+        )
+
+        result = self.transaction_service.record_asset_only(
+            user_id=self.user_id,
+            asset_records=[asset_record],
+            idempotency_key=idempotency_key,
+            source=TransactionSource.BATCH_INGESTER,
+            description=f"Normalized: {normalized.get('asset_name', 'record')[:50]}",
+        )
+
+        return result.asset_record_ids.get("staging_normalized", 0)
 
     def get_pending_records(self, source_type: str = None,
                            limit: int = 1000) -> List[Dict[str, Any]]:

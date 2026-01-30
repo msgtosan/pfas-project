@@ -60,11 +60,13 @@ class TestZerodhaParser:
         assert parser._to_decimal(None) == Decimal("0")
         assert parser._to_decimal("") == Decimal("0")
 
-    def test_get_or_create_broker_new(self, db_connection):
+    def test_get_or_create_broker_new(self, db_connection, sample_user):
         """Test creating a new broker."""
+        from pfas.core.transaction_service import TransactionService
         parser = ZerodhaParser(db_connection)
+        txn_service = TransactionService(db_connection)
 
-        broker_id = parser._get_or_create_broker("Zerodha")
+        broker_id = parser._get_or_create_broker_via_service(txn_service, "Zerodha", user_id=sample_user["id"])
         assert broker_id > 0
 
         # Verify it was created
@@ -74,15 +76,17 @@ class TestZerodhaParser:
         row = cursor.fetchone()
         assert row["name"] == "Zerodha"
 
-    def test_get_or_create_broker_existing(self, db_connection):
+    def test_get_or_create_broker_existing(self, db_connection, sample_user):
         """Test getting existing broker."""
+        from pfas.core.transaction_service import TransactionService
         parser = ZerodhaParser(db_connection)
+        txn_service = TransactionService(db_connection)
 
         # Create first time
-        broker_id1 = parser._get_or_create_broker("Zerodha")
+        broker_id1 = parser._get_or_create_broker_via_service(txn_service, "Zerodha", user_id=sample_user["id"])
 
         # Get same broker again
-        broker_id2 = parser._get_or_create_broker("Zerodha")
+        broker_id2 = parser._get_or_create_broker_via_service(txn_service, "Zerodha", user_id=sample_user["id"])
 
         # Should return same ID
         assert broker_id1 == broker_id2

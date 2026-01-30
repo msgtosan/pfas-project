@@ -116,14 +116,29 @@ class BankIntelligenceAnalyzer:
     - SQLite storage with full metadata
     """
 
-    def __init__(self, db_path: str, data_root: str = "Data/Users"):
+    def __init__(self, db_path: str, data_root: str = ""):
         """
         Initialize analyzer.
 
         Args:
             db_path: Path to SQLite database (money_movement.db)
-            data_root: Root directory for user data (default: Data/Users)
+            data_root: Root directory for user data. When empty, uses PathResolver
+                       config via config/paths.json. For standalone usage, pass
+                       explicit path like "Data/Users".
+
+        Note:
+            When integrating with PFAS, use PathResolver to get the correct path:
+            >>> resolver = PathResolver(project_root, user_name)
+            >>> data_root = str(resolver.user_dir.parent)  # Gets Users directory
         """
+        if not data_root:
+            # Try to load from config
+            from pfas.core.paths import PathResolver
+            try:
+                resolver = PathResolver(Path.cwd(), "")
+                data_root = resolver.config.get("users_base", "Users")
+            except Exception:
+                data_root = "Users"  # Fallback default
         self.db_path = db_path
         self.data_root = Path(data_root)
         self.conn: Optional[sqlite3.Connection] = None
@@ -768,8 +783,13 @@ def main():
     """CLI entry point for testing."""
     import sys
 
-    # Default paths
-    data_root = "Data/Users"
+    # Default paths - try PathResolver config first, fallback to legacy
+    try:
+        from pfas.core.paths import PathResolver
+        resolver = PathResolver(Path.cwd(), "")
+        data_root = resolver.config.get("users_base", "Users")
+    except Exception:
+        data_root = "Users"  # Fallback for standalone usage
     db_path = "Data/Reports/Bank_Intelligence/money_movement.db"
 
     if len(sys.argv) > 1:

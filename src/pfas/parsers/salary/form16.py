@@ -8,11 +8,18 @@ Form 16 is the TDS certificate issued by employer containing:
 import re
 import zipfile
 import tempfile
+import hashlib
 import pdfplumber
 from pathlib import Path
 from decimal import Decimal
 from typing import Optional
 import sqlite3
+
+from pfas.core.transaction_service import (
+    TransactionService,
+    TransactionSource,
+    AssetRecord,
+)
 
 from .models import Form16Record, SalaryParseResult
 
@@ -232,7 +239,10 @@ class Form16Parser:
         employer_id: Optional[int] = None
     ) -> bool:
         """
-        Save Form 16 record to database.
+        Save Form 16 record to database via TransactionService.
+
+        Form 16 is a summary document, so we don't create journal entries
+        (those come from individual payslips). We just store the record.
 
         Args:
             result: SalaryParseResult from parsing
@@ -246,62 +256,50 @@ class Form16Parser:
             return False
 
         record = result.form16_record
+        txn_service = TransactionService(self.conn)
 
-        try:
-            self.conn.execute(
-                """INSERT INTO form16_records
-                (user_id, employer_id, assessment_year,
-                 q1_tds, q2_tds, q3_tds, q4_tds, total_tds,
-                 salary_17_1, perquisites_17_2, profits_17_3, gross_salary,
-                 hra_exemption, lta_exemption, other_exemptions,
-                 standard_deduction, professional_tax,
-                 section_80c, section_80ccd_1b, section_80ccd_2, section_80d,
-                 taxable_income, tax_payable, source_file)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(user_id, employer_id, assessment_year)
-                DO UPDATE SET
-                    q1_tds = excluded.q1_tds,
-                    q2_tds = excluded.q2_tds,
-                    q3_tds = excluded.q3_tds,
-                    q4_tds = excluded.q4_tds,
-                    total_tds = excluded.total_tds,
-                    salary_17_1 = excluded.salary_17_1,
-                    perquisites_17_2 = excluded.perquisites_17_2,
-                    gross_salary = excluded.gross_salary,
-                    standard_deduction = excluded.standard_deduction,
-                    section_80ccd_2 = excluded.section_80ccd_2,
-                    taxable_income = excluded.taxable_income,
-                    source_file = excluded.source_file""",
-                (
-                    user_id,
-                    employer_id,
-                    record.assessment_year,
-                    str(record.q1_tds),
-                    str(record.q2_tds),
-                    str(record.q3_tds),
-                    str(record.q4_tds),
-                    str(record.total_tds),
-                    str(record.salary_17_1),
-                    str(record.perquisites_17_2),
-                    str(record.profits_17_3),
-                    str(record.gross_salary),
-                    str(record.hra_exemption),
-                    str(record.lta_exemption),
-                    str(record.other_exemptions),
-                    str(record.standard_deduction),
-                    str(record.professional_tax),
-                    str(record.section_80c),
-                    str(record.section_80ccd_1b),
-                    str(record.section_80ccd_2),
-                    str(record.section_80d),
-                    str(record.taxable_income),
-                    str(record.total_tax_payable),
-                    result.source_file
-                )
-            )
-            self.conn.commit()
-            return True
+        # Generate idempotency key
+        file_hash = hashlib.sha256(result.source_file.encode()).hexdigest()[:8]
+        idempotency_key = f"form16:{file_hash}:{user_id}:{employer_id}:{record.assessment_year}"
 
-        except Exception as e:
-            self.conn.rollback()
-            raise Exception(f"Failed to save Form 16 record: {e}") from e
+        # Form 16 uses REPLACE to allow updates for the same assessment year
+        asset_record = AssetRecord(
+            table_name="form16_records",
+            data={
+                "user_id": user_id,
+                "employer_id": employer_id,
+                "assessment_year": record.assessment_year,
+                "q1_tds": str(record.q1_tds),
+                "q2_tds": str(record.q2_tds),
+                "q3_tds": str(record.q3_tds),
+                "q4_tds": str(record.q4_tds),
+                "total_tds": str(record.total_tds),
+                "salary_17_1": str(record.salary_17_1),
+                "perquisites_17_2": str(record.perquisites_17_2),
+                "profits_17_3": str(record.profits_17_3),
+                "gross_salary": str(record.gross_salary),
+                "hra_exemption": str(record.hra_exemption),
+                "lta_exemption": str(record.lta_exemption),
+                "other_exemptions": str(record.other_exemptions),
+                "standard_deduction": str(record.standard_deduction),
+                "professional_tax": str(record.professional_tax),
+                "section_80c": str(record.section_80c),
+                "section_80ccd_1b": str(record.section_80ccd_1b),
+                "section_80ccd_2": str(record.section_80ccd_2),
+                "section_80d": str(record.section_80d),
+                "taxable_income": str(record.taxable_income),
+                "tax_payable": str(record.total_tax_payable),
+                "source_file": result.source_file,
+            },
+            on_conflict="REPLACE"
+        )
+
+        txn_result = txn_service.record_asset_only(
+            user_id=user_id,
+            asset_records=[asset_record],
+            idempotency_key=idempotency_key,
+            source=TransactionSource.MANUAL,
+            description=f"Form 16: {record.assessment_year}",
+        )
+
+        return txn_result.result.value == "success"

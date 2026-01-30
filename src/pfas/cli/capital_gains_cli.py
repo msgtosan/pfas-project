@@ -262,8 +262,7 @@ def cmd_compare(args):
     casparser_stcg = Decimal("0")
 
     try:
-        # Import casparser
-        sys.path.insert(0, str(Path("/home/sshankar/CASTest/venv/lib/python3.12/site-packages")))
+        # Import casparser (must be installed: pip install casparser)
         from casparser import read_cas_pdf
         from casparser.analysis import CapitalGainsReport
 

@@ -11,11 +11,18 @@ Common perquisites:
 """
 
 import re
+import hashlib
 import pdfplumber
 from pathlib import Path
 from decimal import Decimal
 from typing import Optional
 import sqlite3
+
+from pfas.core.transaction_service import (
+    TransactionService,
+    TransactionSource,
+    AssetRecord,
+)
 
 from .models import Form12BARecord, Perquisite, PerquisiteType, SalaryParseResult
 
@@ -291,14 +298,16 @@ class Form12BAParser:
     def save_to_db(
         self,
         result: SalaryParseResult,
-        form16_id: int
+        form16_id: int,
+        user_id: int = 1
     ) -> int:
         """
-        Save perquisites to database.
+        Save perquisites to database via TransactionService.
 
         Args:
             result: SalaryParseResult from parsing
             form16_id: Associated Form 16 record ID
+            user_id: User ID for audit logging
 
         Returns:
             Number of perquisites saved
@@ -307,29 +316,36 @@ class Form12BAParser:
             return 0
 
         record = result.form12ba_record
-        count = 0
+        txn_service = TransactionService(self.conn)
+        file_hash = hashlib.sha256(result.source_file.encode()).hexdigest()[:8]
 
-        try:
-            for perquisite in record.perquisites:
-                self.conn.execute(
-                    """INSERT INTO perquisites
-                    (form16_id, perquisite_type, description,
-                     gross_value, recovered_from_employee, taxable_value)
-                    VALUES (?, ?, ?, ?, ?, ?)""",
-                    (
-                        form16_id,
-                        perquisite.perquisite_type.value,
-                        perquisite.description,
-                        str(perquisite.gross_value),
-                        str(perquisite.recovered_from_employee),
-                        str(perquisite.taxable_value)
-                    )
-                )
+        count = 0
+        for idx, perquisite in enumerate(record.perquisites):
+            # Generate idempotency key
+            idempotency_key = f"perquisite:{file_hash}:{idx}:{form16_id}:{perquisite.perquisite_type.value}"
+
+            asset_record = AssetRecord(
+                table_name="perquisites",
+                data={
+                    "form16_id": form16_id,
+                    "perquisite_type": perquisite.perquisite_type.value,
+                    "description": perquisite.description,
+                    "gross_value": str(perquisite.gross_value),
+                    "recovered_from_employee": str(perquisite.recovered_from_employee),
+                    "taxable_value": str(perquisite.taxable_value),
+                },
+                on_conflict="IGNORE"
+            )
+
+            txn_result = txn_service.record_asset_only(
+                user_id=user_id,
+                asset_records=[asset_record],
+                idempotency_key=idempotency_key,
+                source=TransactionSource.MANUAL,
+                description=f"Perquisite: {perquisite.perquisite_type.value}",
+            )
+
+            if txn_result.result.value == "success":
                 count += 1
 
-            self.conn.commit()
-            return count
-
-        except Exception as e:
-            self.conn.rollback()
-            raise Exception(f"Failed to save perquisites: {e}") from e
+        return count

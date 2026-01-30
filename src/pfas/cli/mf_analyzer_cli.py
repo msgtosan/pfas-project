@@ -22,12 +22,14 @@ from typing import Optional
 try:
     from pfas.analyzers import MFAnalyzer, AnalysisResult
     from pfas.core.database import DatabaseManager
+    from pfas.core.paths import PathResolver
 except ImportError:
     src_path = Path(__file__).parent.parent.parent.parent / "src"
     if src_path.exists() and str(src_path) not in sys.path:
         sys.path.insert(0, str(src_path))
     from pfas.analyzers import MFAnalyzer, AnalysisResult
     from pfas.core.database import DatabaseManager
+    from pfas.core.paths import PathResolver
 
 
 def get_project_root() -> Path:
@@ -194,12 +196,11 @@ Data Structure:
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     )
 
-    # Determine paths
-    user_data_dir = PROJECT_ROOT / "Data" / "Users" / args.user
-    db_path = args.db or str(user_data_dir / "pfas.db")
-    mf_folder = Path(args.mf_folder) if args.mf_folder else user_data_dir / "Mutual-Fund"
-    # Reports go to Data/Reports/{user}/Mutual-Funds/
-    output_dir = Path(args.output_dir) if args.output_dir else PROJECT_ROOT / "Data" / "Reports" / args.user / "Mutual-Funds"
+    # Determine paths using PathResolver (centralized, config-driven)
+    resolver = PathResolver(PROJECT_ROOT, args.user)
+    db_path = args.db or str(resolver.db_path())
+    mf_folder = Path(args.mf_folder) if args.mf_folder else resolver.inbox() / "Mutual-Fund"
+    output_dir = Path(args.output_dir) if args.output_dir else resolver.reports() / "Mutual-Funds"
 
     print(f"User: {args.user}")
     print(f"Database: {db_path}")

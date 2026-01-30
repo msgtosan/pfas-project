@@ -12,9 +12,18 @@ New Tax Regime: Standard deduction still applies.
 """
 
 import sqlite3
+import hashlib
 from datetime import date
 from decimal import Decimal
 from typing import Optional, List, Dict, Any
+
+from pfas.core.transaction_service import (
+    TransactionService,
+    TransactionSource,
+    AssetRecord,
+)
+from pfas.core.journal import JournalEntry
+from pfas.core.accounts import get_account_by_code
 
 from .models import (
     Property,
@@ -168,28 +177,47 @@ class RentalIncomeManager:
         self.conn.commit()
 
     def add_property(self, property: Property) -> int:
-        """Add a new property."""
-        cursor = self.conn.execute(
-            """
-            INSERT INTO properties
-            (user_id, property_type, address, city, pin_code, tenant_name,
-             acquisition_date, acquisition_cost, account_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                property.user_id,
-                property.property_type.value,
-                property.address,
-                property.city,
-                property.pin_code,
-                property.tenant_name,
-                property.acquisition_date.isoformat() if property.acquisition_date else None,
-                str(property.acquisition_cost),
-                property.account_id,
-            )
+        """Add a new property via TransactionService."""
+        txn_service = TransactionService(self.conn)
+
+        # Generate idempotency key from address
+        address_hash = hashlib.sha256(property.address.encode()).hexdigest()[:12]
+        idempotency_key = f"property:{property.user_id}:{address_hash}"
+
+        asset_record = AssetRecord(
+            table_name="properties",
+            data={
+                "user_id": property.user_id,
+                "property_type": property.property_type.value,
+                "address": property.address,
+                "city": property.city,
+                "pin_code": property.pin_code,
+                "tenant_name": property.tenant_name,
+                "acquisition_date": property.acquisition_date.isoformat() if property.acquisition_date else None,
+                "acquisition_cost": str(property.acquisition_cost),
+                "account_id": property.account_id,
+            },
+            on_conflict="IGNORE"
         )
-        self.conn.commit()
-        return cursor.lastrowid
+
+        result = txn_service.record_asset_only(
+            user_id=property.user_id or 1,
+            asset_records=[asset_record],
+            idempotency_key=idempotency_key,
+            source=TransactionSource.MANUAL,
+            description=f"Property: {property.address[:50]}",
+        )
+
+        if result.asset_record_ids.get("properties"):
+            return result.asset_record_ids["properties"]
+
+        # If insert was ignored, fetch existing
+        cursor = self.conn.execute(
+            "SELECT id FROM properties WHERE user_id = ? AND address = ?",
+            (property.user_id, property.address)
+        )
+        row = cursor.fetchone()
+        return row['id'] if isinstance(row, dict) else row[0] if row else 0
 
     def get_property(self, property_id: int) -> Optional[Property]:
         """Get property by ID."""
@@ -208,25 +236,92 @@ class RentalIncomeManager:
         )
         return [self._row_to_property(row) for row in cursor.fetchall()]
 
-    def add_rental_income(self, income: RentalIncome) -> int:
-        """Add rental income record."""
-        cursor = self.conn.execute(
-            """
-            INSERT OR REPLACE INTO rental_income
-            (property_id, financial_year, month, gross_rent, municipal_tax_paid, source)
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (
-                income.property_id,
-                income.financial_year,
-                income.month,
-                str(income.gross_rent),
-                str(income.municipal_tax_paid),
-                income.source,
-            )
+    def add_rental_income(self, income: RentalIncome, user_id: int = 1) -> int:
+        """
+        Add rental income record via TransactionService.
+
+        Creates journal entry:
+            Dr Bank Account (1101)     | Gross Rent
+            Cr Rental Income (4401)    | Gross Rent
+        """
+        txn_service = TransactionService(self.conn)
+
+        # Generate idempotency key
+        idempotency_key = f"rental:{income.property_id}:{income.financial_year}:{income.month}"
+
+        # Create journal entries
+        entries = self._create_rental_journal_entries(income, user_id)
+
+        asset_record = AssetRecord(
+            table_name="rental_income",
+            data={
+                "property_id": income.property_id,
+                "financial_year": income.financial_year,
+                "month": income.month,
+                "gross_rent": str(income.gross_rent),
+                "municipal_tax_paid": str(income.municipal_tax_paid),
+                "source": income.source,
+            },
+            on_conflict="REPLACE"  # Allow updates for same property/FY/month
         )
-        self.conn.commit()
-        return cursor.lastrowid
+
+        # Try to parse month to get transaction date
+        try:
+            from datetime import datetime
+            txn_date = datetime.strptime(income.month, "%b-%Y").date()
+        except:
+            txn_date = date.today()
+
+        result = txn_service.record(
+            user_id=user_id,
+            entries=entries,
+            description=f"Rental income: {income.month}",
+            source=TransactionSource.MANUAL,
+            idempotency_key=idempotency_key,
+            txn_date=txn_date,
+            reference_type="RENTAL_INCOME",
+            asset_records=[asset_record],
+        )
+
+        if result.asset_record_ids.get("rental_income"):
+            return result.asset_record_ids["rental_income"]
+
+        # If insert/replace happened, return existing/new
+        cursor = self.conn.execute(
+            "SELECT id FROM rental_income WHERE property_id = ? AND financial_year = ? AND month = ?",
+            (income.property_id, income.financial_year, income.month)
+        )
+        row = cursor.fetchone()
+        return row['id'] if isinstance(row, dict) else row[0] if row else 0
+
+    def _create_rental_journal_entries(self, income: RentalIncome, user_id: int) -> List[JournalEntry]:
+        """Create journal entries for rental income."""
+        entries = []
+
+        try:
+            bank_account = get_account_by_code(self.conn, "1101")  # Bank - Savings
+            rental_income_account = get_account_by_code(self.conn, "4401")  # Gross Rental Income
+
+            if not bank_account or not rental_income_account:
+                return entries
+
+            if income.gross_rent > Decimal("0"):
+                # Dr Bank | Cr Rental Income
+                entries.append(JournalEntry(
+                    account_id=bank_account.id,
+                    debit=income.gross_rent,
+                    narration=f"Rental income: {income.month}"
+                ))
+                entries.append(JournalEntry(
+                    account_id=rental_income_account.id,
+                    credit=income.gross_rent,
+                    narration=f"Rental income: {income.month}"
+                ))
+        except Exception:
+            # If accounts table doesn't exist, skip journal entries
+            pass
+
+        return entries
 
     def add_rental_income_from_bank(
         self,

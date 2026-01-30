@@ -31,7 +31,7 @@ DEFAULT_DB_PASSWORD = "pfas_secure_2024"
 
 # Default config paths relative to project root
 DEFAULT_GLOBAL_CONFIG = "config/mf_analyzer_config_v2.json"
-USER_CONFIG_DIR = "Data/Users/{user}/config"
+# Note: User config paths are now resolved via PathResolver (no hardcoding)
 USER_PASSWORDS_FILE = "passwords.json"
 USER_PREFERENCES_FILE = "preferences.json"
 from pfas.analyzers.mf_reconciler import MFReconciler
@@ -89,8 +89,8 @@ def load_config(
     Load configuration with hierarchical precedence:
     1. Default built-in config (lowest)
     2. Global project config (config/mf_analyzer_config_v2.json)
-    3. User preferences (Data/Users/{user}/config/preferences.json)
-    4. User passwords (Data/Users/{user}/config/passwords.json)
+    3. User preferences (via PathResolver: {user_dir}/config/preferences.json)
+    4. User passwords (via PathResolver: {user_dir}/config/passwords.json)
     5. Command-line specified config file (highest for paths/processing)
 
     Args:
@@ -101,14 +101,16 @@ def load_config(
     Returns:
         Merged configuration dictionary
     """
-    # 1. Default built-in config
+    # Use PathResolver for user-specific paths (centralized, config-driven)
+    resolver = PathResolver(root_path, user_name)
+
+    # 1. Default built-in config (paths are relative to user dir via PathResolver)
     config = {
         "paths": {
-            "data_root": "Data/Users/{user}",
             "inbox": "inbox/Mutual-Fund",
             "archive": "archive/Mutual-Fund",
             "reports_output": "reports/Mutual-Fund",
-            "database": "db/finance.db"
+            "database": str(resolver.db_path())
         },
         "processing": {
             "archive_processed_files": True,
@@ -126,8 +128,8 @@ def load_config(
         config = deep_merge(config, global_config)
         logger.info(f"Loaded global config: {global_config_path}")
 
-    # 3. Load user preferences
-    user_config_dir = root_path / USER_CONFIG_DIR.format(user=user_name)
+    # 3. Load user preferences (via PathResolver)
+    user_config_dir = resolver.user_config_dir()
     user_prefs_path = user_config_dir / USER_PREFERENCES_FILE
     if user_prefs_path.exists():
         user_prefs = load_json_file(user_prefs_path)

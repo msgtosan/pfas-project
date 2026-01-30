@@ -25,10 +25,18 @@ class AuditLogEntry:
     user_id: Optional[int]
     ip_address: Optional[str]
     timestamp: datetime
+    source: Optional[str] = None  # e.g., 'parser:cams', 'manual', 'api', 'batch_ingester'
 
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> "AuditLogEntry":
         """Create AuditLogEntry from database row."""
+        # Handle both old schema (without source) and new schema (with source)
+        source = None
+        try:
+            source = row["source"]
+        except (IndexError, KeyError):
+            pass
+
         return cls(
             id=row["id"],
             table_name=row["table_name"],
@@ -39,6 +47,7 @@ class AuditLogEntry:
             user_id=row["user_id"],
             ip_address=row["ip_address"],
             timestamp=datetime.fromisoformat(row["timestamp"]) if isinstance(row["timestamp"], str) else row["timestamp"],
+            source=source,
         )
 
 
@@ -74,6 +83,7 @@ class AuditLogger:
         db_connection: sqlite3.Connection,
         user_id: int = None,
         ip_address: str = None,
+        source: str = None,
     ):
         """
         Initialize the audit logger.
@@ -82,10 +92,12 @@ class AuditLogger:
             db_connection: SQLite database connection
             user_id: Default user ID for log entries
             ip_address: Default IP address for log entries
+            source: Default source for log entries (e.g., 'parser:cams', 'manual', 'api')
         """
         self.conn = db_connection
         self.user_id = user_id
         self.ip_address = ip_address
+        self.source = source
 
     def log_change(
         self,
@@ -96,6 +108,7 @@ class AuditLogger:
         new_values: Dict[str, Any] = None,
         user_id: int = None,
         ip_address: str = None,
+        source: str = None,
     ) -> int:
         """
         Log a data change.
@@ -108,6 +121,7 @@ class AuditLogger:
             new_values: New values (for INSERT/UPDATE)
             user_id: User who made the change (overrides default)
             ip_address: IP address (overrides default)
+            source: Source of the change (e.g., 'parser:cams', 'manual', 'api')
 
         Returns:
             Audit log entry ID
@@ -120,22 +134,46 @@ class AuditLogger:
 
         cursor = self.conn.cursor()
 
-        cursor.execute(
-            """
-            INSERT INTO audit_log
-            (table_name, record_id, action, old_values, new_values, user_id, ip_address)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                table_name,
-                record_id,
-                action,
-                json.dumps(old_values) if old_values else None,
-                json.dumps(new_values) if new_values else None,
-                user_id or self.user_id,
-                ip_address or self.ip_address,
-            ),
-        )
+        # Check if source column exists (backward compatibility)
+        cursor.execute("PRAGMA table_info(audit_log)")
+        columns = [col[1] for col in cursor.fetchall()]
+        has_source = "source" in columns
+
+        if has_source:
+            cursor.execute(
+                """
+                INSERT INTO audit_log
+                (table_name, record_id, action, old_values, new_values, user_id, ip_address, source)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    table_name,
+                    record_id,
+                    action,
+                    json.dumps(old_values) if old_values else None,
+                    json.dumps(new_values) if new_values else None,
+                    user_id or self.user_id,
+                    ip_address or self.ip_address,
+                    source or self.source,
+                ),
+            )
+        else:
+            cursor.execute(
+                """
+                INSERT INTO audit_log
+                (table_name, record_id, action, old_values, new_values, user_id, ip_address)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    table_name,
+                    record_id,
+                    action,
+                    json.dumps(old_values) if old_values else None,
+                    json.dumps(new_values) if new_values else None,
+                    user_id or self.user_id,
+                    ip_address or self.ip_address,
+                ),
+            )
 
         self.conn.commit()
         return cursor.lastrowid
@@ -146,6 +184,7 @@ class AuditLogger:
         record_id: int,
         new_values: Dict[str, Any],
         user_id: int = None,
+        source: str = None,
     ) -> int:
         """Convenience method to log an INSERT."""
         return self.log_change(
@@ -154,6 +193,7 @@ class AuditLogger:
             action="INSERT",
             new_values=new_values,
             user_id=user_id,
+            source=source,
         )
 
     def log_update(
@@ -163,6 +203,7 @@ class AuditLogger:
         old_values: Dict[str, Any],
         new_values: Dict[str, Any],
         user_id: int = None,
+        source: str = None,
     ) -> int:
         """Convenience method to log an UPDATE."""
         return self.log_change(
@@ -172,6 +213,7 @@ class AuditLogger:
             old_values=old_values,
             new_values=new_values,
             user_id=user_id,
+            source=source,
         )
 
     def log_delete(
@@ -180,6 +222,7 @@ class AuditLogger:
         record_id: int,
         old_values: Dict[str, Any],
         user_id: int = None,
+        source: str = None,
     ) -> int:
         """Convenience method to log a DELETE."""
         return self.log_change(
@@ -188,6 +231,7 @@ class AuditLogger:
             action="DELETE",
             old_values=old_values,
             user_id=user_id,
+            source=source,
         )
 
     def get_log_entry(self, log_id: int) -> Optional[AuditLogEntry]:
